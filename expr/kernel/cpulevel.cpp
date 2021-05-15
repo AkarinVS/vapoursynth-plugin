@@ -20,15 +20,29 @@
 
 #include <cstring>
 #include "cpulevel.h"
-#include "../vscore.h"
+//#include "../vscore.h"
+#include "../vslog.h"
+
+#include <stdlib.h>
 
 int vs_get_cpulevel(const struct VSCore *core) {
-    return core->getCpuLevel();
+    static int level = -1;
+    if (level < 0) {
+        const char *s = getenv("CPU_LEVEL");
+        if (!s) level = VS_CPU_LEVEL_MAX;
+        else {
+            level = atoi(s);
+            vsDebug("forced cpu level to %d (%s).\n", level, vs_cpulevel_to_str(level));
+        }
+    }
+    return level;
 }
 
+#if 0
 int vs_set_cpulevel(struct VSCore *core, int level) {
     return core->setCpuLevel(level);
 }
+#endif
 
 int vs_cpulevel_from_str(const char *name) {
     if (!strcmp(name, "none"))

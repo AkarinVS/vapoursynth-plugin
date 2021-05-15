@@ -54,7 +54,7 @@ namespace {
 
 enum class ExprOpType {
     // Terminals.
-    MEM_LOAD_U8, MEM_LOAD_U16, MEM_LOAD_F16, MEM_LOAD_F32, CONSTANT,
+    MEM_LOAD_U8, MEM_LOAD_U16, MEM_LOAD_F16, MEM_LOAD_F32, CONSTANT, MEM_LOAD_CONST,
     MEM_STORE_U8, MEM_STORE_U16, MEM_STORE_F16, MEM_STORE_F32,
 
     // Arithmetic primitives.
@@ -92,6 +92,14 @@ enum class ComparisonType {
     NLE = 6,
 };
 
+enum MemConstIndex {
+    CONST_N = 0, // current frame number
+    CONST_Y = 1, // the current row
+    CONST_FIRST_PROP = 2, // first property
+
+    CLIP_X = MAX_EXPR_INPUTS, // temporary clip index for the list of X coordinates (when 'X' is used)
+};
+
 #ifdef VS_TARGET_CPU_X86
 static_assert(static_cast<int>(ComparisonType::EQ) == _CMP_EQ_OQ, "");
 static_assert(static_cast<int>(ComparisonType::LT) == _CMP_LT_OS, "");
@@ -123,6 +131,31 @@ struct ExprOp {
 bool operator==(const ExprOp &lhs, const ExprOp &rhs) { return lhs.type == rhs.type && lhs.imm.u == rhs.imm.u; }
 bool operator!=(const ExprOp &lhs, const ExprOp &rhs) { return !(lhs == rhs); }
 
+struct PropAccess {
+    int clip;
+    std::string name;
+
+    PropAccess(int i = -1, std::string n = {}) : clip(i), name(n) {}
+};
+
+bool operator==(const PropAccess &lhs, const PropAccess &rhs) { return lhs.clip == rhs.clip && lhs.name == rhs.name; }
+bool operator!=(const PropAccess &lhs, const PropAccess &rhs) { return !(lhs == rhs); }
+bool operator<(const PropAccess &lhs, const PropAccess &rhs) {
+    if (lhs.clip < rhs.clip) return true;
+    if (lhs.clip > rhs.clip) return false;
+    return lhs.name < rhs.name;
+}
+
+struct Token {
+    ExprOp op;
+    PropAccess prop;
+
+    Token(ExprOpType type, ExprUnion param = {}, PropAccess pa = {}) : op(type, param), prop(pa) {}
+};
+
+bool operator==(const Token &lhs, const Token &rhs) { return lhs.op == rhs.op && lhs.prop == rhs.prop; }
+bool operator!=(const Token &lhs, const Token &rhs) { return !(lhs == rhs); }
+
 struct ExprInstruction {
     ExprOp op;
     int dst;
@@ -140,15 +173,18 @@ enum PlaneOp {
 struct ExprData {
     VSNodeRef *node[MAX_EXPR_INPUTS];
     VSVideoInfo vi;
+    float *Xs; // the vector of all X coordinates.
     std::vector<ExprInstruction> bytecode[3];
+    std::vector<PropAccess> pa[3];
     int plane[3];
     int numInputs;
-    typedef void (*ProcessLineProc)(void *rwptrs, intptr_t ptroff[MAX_EXPR_INPUTS + 1], intptr_t niter);
+    typedef void (*ProcessLineProc)(void *rwptrs, intptr_t ptroff[MAX_EXPR_INPUTS + 1], float *consts, intptr_t niter);
     ProcessLineProc proc[3];
 
-    ExprData() : node(), vi(), plane(), numInputs(), proc() {}
+    ExprData() : node(), vi(), Xs(nullptr), plane(), numInputs(), proc() {}
 
     ~ExprData() {
+        vs_aligned_free(Xs);
 #ifdef VS_TARGET_CPU_X86
         for (int i = 0; i < 3; i++) {
             if (proc[i]) {
@@ -170,6 +206,7 @@ class ExprCompiler {
     virtual void loadF16(const ExprInstruction &insn) = 0;
     virtual void loadF32(const ExprInstruction &insn) = 0;
     virtual void loadConst(const ExprInstruction &insn) = 0;
+    virtual void loadMemConst(const ExprInstruction &insn) = 0;
     virtual void store8(const ExprInstruction &insn) = 0;
     virtual void store16(const ExprInstruction &insn) = 0;
     virtual void storeF16(const ExprInstruction &insn) = 0;
@@ -202,6 +239,7 @@ public:
         case ExprOpType::MEM_LOAD_F16: loadF16(insn); break;
         case ExprOpType::MEM_LOAD_F32: loadF32(insn); break;
         case ExprOpType::CONSTANT: loadConst(insn); break;
+        case ExprOpType::MEM_LOAD_CONST: loadMemConst(insn); break;
         case ExprOpType::MEM_STORE_U8: store8(insn); break;
         case ExprOpType::MEM_STORE_U16: store16(insn); break;
         case ExprOpType::MEM_STORE_F16: storeF16(insn); break;
@@ -232,10 +270,10 @@ public:
     virtual ExprData::ProcessLineProc getCode() = 0;
 };
 
-class ExprCompiler128 : public ExprCompiler, private jitasm::function<void, ExprCompiler128, uint8_t *, const intptr_t *, intptr_t> {
-    typedef jitasm::function<void, ExprCompiler128, uint8_t *, const intptr_t *, intptr_t> jit;
-    friend struct jitasm::function<void, ExprCompiler128, uint8_t *, const intptr_t *, intptr_t>;
-    friend struct jitasm::function_cdecl<void, ExprCompiler128, uint8_t *, const intptr_t *, intptr_t>;
+class ExprCompiler128 : public ExprCompiler, private jitasm::function<void, ExprCompiler128, uint8_t *, const intptr_t *, const float *, intptr_t> {
+    typedef jitasm::function<void, ExprCompiler128, uint8_t *, const intptr_t *, const float *, intptr_t> jit;
+    friend struct jitasm::function<void, ExprCompiler128, uint8_t *, const intptr_t *, const float *, intptr_t>;
+    friend struct jitasm::function_cdecl<void, ExprCompiler128, uint8_t *, const intptr_t *, const float *, intptr_t>;
 
 #define SPLAT(x) { (x), (x), (x), (x) }
     static constexpr ExprUnion constData alignas(16)[39][4] = {
@@ -326,13 +364,13 @@ class ExprCompiler128 : public ExprCompiler, private jitasm::function<void, Expr
 #undef SPLAT
 
     // JitASM compiles everything from main(), so record the operations for later.
-    std::vector<std::function<void(Reg, XmmReg, Reg, std::unordered_map<int, std::pair<XmmReg, XmmReg>> &)>> deferred;
+    std::vector<std::function<void(Reg, XmmReg, Reg, Reg, std::unordered_map<int, std::pair<XmmReg, XmmReg>> &)>> deferred;
 
     CPUFeatures cpuFeatures;
     int numInputs;
     int curLabel;
 
-#define EMIT() [this, insn](Reg regptrs, XmmReg zero, Reg constants, std::unordered_map<int, std::pair<XmmReg, XmmReg>> &bytecodeRegs)
+#define EMIT() [this, insn](Reg regptrs, XmmReg zero, Reg constants, Reg fconsts, std::unordered_map<int, std::pair<XmmReg, XmmReg>> &bytecodeRegs)
 #define VEX1(op, arg1, arg2) \
 do { \
   if (cpuFeatures.avx) \
@@ -453,6 +491,19 @@ do { \
 
             Reg32 a;
             mov(a, insn.op.imm.u);
+            VEX1(movd, t1.first, a);
+            VEX2IMM(shufps, t1.first, t1.first, t1.first, 0);
+            VEX1(movaps, t1.second, t1.first);
+        });
+    }
+
+    void loadMemConst(const ExprInstruction &insn) override
+    {
+        deferred.push_back(EMIT()
+        {
+            auto t1 = bytecodeRegs[insn.dst];
+            Reg32 a;
+            mov(a, dword_ptr[fconsts + sizeof(float) * insn.op.imm.u]);
             VEX1(movd, t1.first, a);
             VEX2IMM(shufps, t1.first, t1.first, t1.first, 0);
             VEX1(movaps, t1.second, t1.first);
@@ -881,7 +932,7 @@ do { \
     {
         int l = curLabel++;
 
-        deferred.push_back([this, insn, l](Reg regptrs, XmmReg zero, Reg constants, std::unordered_map<int, std::pair<XmmReg, XmmReg>> &bytecodeRegs)
+        deferred.push_back([this, insn, l](Reg regptrs, XmmReg zero, Reg constants, Reg fconsts, std::unordered_map<int, std::pair<XmmReg, XmmReg>> &bytecodeRegs)
         {
             char label[] = "label-0000";
             sprintf(label, "label-%04d", l);
@@ -911,7 +962,7 @@ do { \
     {
         int l = curLabel++;
 
-        deferred.push_back([this, insn, l](Reg regptrs, XmmReg zero, Reg constants, std::unordered_map<int, std::pair<XmmReg, XmmReg>> &bytecodeRegs)
+        deferred.push_back([this, insn, l](Reg regptrs, XmmReg zero, Reg constants, Reg fconsts, std::unordered_map<int, std::pair<XmmReg, XmmReg>> &bytecodeRegs)
         {
             char label[] = "label-0000";
             sprintf(label, "label-%04d", l);
@@ -941,7 +992,7 @@ do { \
     {
         int l = curLabel++;
 
-        deferred.push_back([this, insn, l](Reg regptrs, XmmReg zero, Reg constants, std::unordered_map<int, std::pair<XmmReg, XmmReg>> &bytecodeRegs)
+        deferred.push_back([this, insn, l](Reg regptrs, XmmReg zero, Reg constants, Reg fconsts, std::unordered_map<int, std::pair<XmmReg, XmmReg>> &bytecodeRegs)
         {
             char label[] = "label-0000";
             sprintf(label, "label-%04d", l);
@@ -975,7 +1026,7 @@ do { \
         });
     }
 
-    void main(Reg regptrs, Reg regoffs, Reg niter)
+    void main(Reg regptrs, Reg regoffs, Reg fconsts, Reg niter)
     {
         std::unordered_map<int, std::pair<XmmReg, XmmReg>> bytecodeRegs;
         XmmReg zero;
@@ -986,7 +1037,7 @@ do { \
         L("wloop");
 
         for (const auto &f : deferred) {
-            f(regptrs, zero, constants, bytecodeRegs);
+            f(regptrs, zero, constants, fconsts, bytecodeRegs);
         }
 
 #if UINTPTR_MAX > UINT32_MAX
@@ -1036,10 +1087,10 @@ public:
 
 constexpr ExprUnion ExprCompiler128::constData alignas(16)[39][4];
 
-class ExprCompiler256 : public ExprCompiler, private jitasm::function<void, ExprCompiler256, uint8_t *, const intptr_t *, intptr_t> {
-    typedef jitasm::function<void, ExprCompiler256, uint8_t *, const intptr_t *, intptr_t> jit;
-    friend struct jitasm::function<void, ExprCompiler256, uint8_t *, const intptr_t *, intptr_t>;
-    friend struct jitasm::function_cdecl<void, ExprCompiler256, uint8_t *, const intptr_t *, intptr_t>;
+class ExprCompiler256 : public ExprCompiler, private jitasm::function<void, ExprCompiler256, uint8_t *, const intptr_t *, const float *, intptr_t> {
+    typedef jitasm::function<void, ExprCompiler256, uint8_t *, const intptr_t *, const float *, intptr_t> jit;
+    friend struct jitasm::function<void, ExprCompiler256, uint8_t *, const intptr_t *, const float *, intptr_t>;
+    friend struct jitasm::function_cdecl<void, ExprCompiler256, uint8_t *, const intptr_t *, const float *, intptr_t>;
 
 #define SPLAT(x) { (x), (x), (x), (x), (x), (x), (x), (x) }
     static constexpr ExprUnion constData alignas(32)[39][8] = {
@@ -1130,13 +1181,13 @@ class ExprCompiler256 : public ExprCompiler, private jitasm::function<void, Expr
 #undef SPLAT
 
     // JitASM compiles everything from main(), so record the operations for later.
-    std::vector<std::function<void(Reg, YmmReg, Reg, std::unordered_map<int, YmmReg> &)>> deferred;
+    std::vector<std::function<void(Reg, YmmReg, Reg, Reg, std::unordered_map<int, YmmReg> &)>> deferred;
 
     CPUFeatures cpuFeatures;
     int numInputs;
     int curLabel;
 
-#define EMIT() [this, insn](Reg regptrs, YmmReg zero, Reg constants, std::unordered_map<int, YmmReg> &bytecodeRegs)
+#define EMIT() [this, insn](Reg regptrs, YmmReg zero, Reg constants, Reg fconsts, std::unordered_map<int, YmmReg> &bytecodeRegs)
 
     void load8(const ExprInstruction &insn) override
     {
@@ -1198,6 +1249,20 @@ class ExprCompiler256 : public ExprCompiler, private jitasm::function<void, Expr
             XmmReg r1;
             Reg32 a;
             mov(a, insn.op.imm.u);
+            vmovd(r1, a);
+            vbroadcastss(t1, r1);
+        });
+    }
+
+    void loadMemConst(const ExprInstruction &insn) override
+    {
+        deferred.push_back(EMIT()
+        {
+            auto t1 = bytecodeRegs[insn.dst];
+
+            XmmReg r1;
+            Reg32 a;
+            mov(a, dword_ptr[fconsts + sizeof(float) * insn.op.imm.u]);
             vmovd(r1, a);
             vbroadcastss(t1, r1);
         });
@@ -1456,7 +1521,7 @@ do { \
         });
     }
 
-    void exp_(YmmReg x, YmmReg one, Reg constants)
+    void exp_(YmmReg x, YmmReg one, Reg constants, Reg fconsts)
     {
         YmmReg fx, emm0, etmp, y, mask, z;
         vminps(x, x, ymmword_ptr[constants + ConstantIndex::exp_hi * 32]);
@@ -1485,7 +1550,7 @@ do { \
         vmulps(x, y, emm0);
     }
 
-    void log_(YmmReg x, YmmReg zero, YmmReg one, Reg constants)
+    void log_(YmmReg x, YmmReg zero, YmmReg one, Reg constants, Reg fconsts)
     {
         YmmReg emm0, invalid_mask, mask, y, etmp, z;
         vcmpps(invalid_mask, zero, x, _CMP_NLE_US);
@@ -1530,7 +1595,7 @@ do { \
             YmmReg one;
             vmovaps(one, ymmword_ptr[constants + ConstantIndex::float_one * 32]);
             vmovaps(t1, t2);
-            exp_(t1, one, constants);
+            exp_(t1, one, constants, fconsts);
         });
     }
 
@@ -1543,7 +1608,7 @@ do { \
             YmmReg one;
             vmovaps(one, ymmword_ptr[constants + ConstantIndex::float_one * 32]);
             vmovaps(t1, t2);
-            log_(t1, zero, one, constants);
+            log_(t1, zero, one, constants, fconsts);
         });
     }
 
@@ -1560,14 +1625,14 @@ do { \
             mov(a, 2);
             vmovaps(one, ymmword_ptr[constants + ConstantIndex::float_one * 32]);
             vmovaps(r1, t1);
-            log_(r1, zero, one, constants);
+            log_(r1, zero, one, constants, fconsts);
             vmulps(r1, r1, t2);
-            exp_(r1, one, constants);
+            exp_(r1, one, constants, fconsts);
             vmovaps(t3, r1);
         });
     }
 
-    void main(Reg regptrs, Reg regoffs, Reg niter)
+    void main(Reg regptrs, Reg regoffs, Reg frame_consts, Reg niter)
     {
         std::unordered_map<int, YmmReg> bytecodeRegs;
         YmmReg zero;
@@ -1578,7 +1643,7 @@ do { \
         L("wloop");
 
         for (const auto &f : deferred) {
-            f(regptrs, zero, constants, bytecodeRegs);
+            f(regptrs, zero, constants, frame_consts, bytecodeRegs);
         }
 
 #if UINTPTR_MAX > UINT32_MAX
@@ -1657,7 +1722,7 @@ public:
         registers.resize(maxreg + 1);
     }
 
-    void eval(const uint8_t * const *srcp, uint8_t *dstp, int x)
+    void eval(const uint8_t * const *srcp, uint8_t *dstp, const float *consts, int x)
     {
         for (size_t i = 0; i < numInsns; ++i) {
             const ExprInstruction &insn = bytecode[i];
@@ -1672,6 +1737,7 @@ public:
             case ExprOpType::MEM_LOAD_F16: DST = 0; break;
             case ExprOpType::MEM_LOAD_F32: DST = reinterpret_cast<const float *>(srcp[insn.op.imm.u])[x]; break;
             case ExprOpType::CONSTANT: DST = insn.op.imm.f; break;
+            case ExprOpType::MEM_LOAD_CONST: DST = consts[insn.op.imm.u]; break;
             case ExprOpType::ADD: DST = SRC1 + SRC2; break;
             case ExprOpType::SUB: DST = SRC1 - SRC2; break;
             case ExprOpType::MUL: DST = SRC1 * SRC2; break;
@@ -1778,6 +1844,7 @@ struct ExpressionTreeNode {
 class ExpressionTree {
     std::vector<std::unique_ptr<ExpressionTreeNode>> nodes;
     ExpressionTreeNode *root;
+    std::map<PropAccess, int> prop_map;
 public:
     ExpressionTree() : root() {}
 
@@ -1785,6 +1852,20 @@ public:
     const ExpressionTreeNode *getRoot() const { return root; }
 
     void setRoot(ExpressionTreeNode *node) { root = node; }
+
+    int addPropAccess(const PropAccess &pa) {
+        auto search = prop_map.find(pa);
+        if (search != prop_map.end())
+            return search->second;
+        prop_map.insert({pa, prop_map.size() + CONST_FIRST_PROP});
+        return prop_map[pa];
+    }
+    std::vector<PropAccess> getPropAccess() const {
+        std::vector<PropAccess> pa(prop_map.size());
+        for (const auto &it: prop_map)
+            pa[it.second - CONST_FIRST_PROP] = it.first;
+        return pa;
+    }
 
     ExpressionTreeNode *makeNode(ExprOp data)
     {
@@ -1846,9 +1927,9 @@ std::vector<std::string> tokenize(const std::string &expr)
     return tokens;
 }
 
-ExprOp decodeToken(const std::string &token)
+Token decodeToken(const std::string &token)
 {
-    static const std::unordered_map<std::string, ExprOp> simple{
+    static const std::unordered_map<std::string, Token> simple{
         { "+",    { ExprOpType::ADD } },
         { "-",    { ExprOpType::SUB } },
         { "*",    { ExprOpType::MUL } },
@@ -1879,6 +1960,17 @@ ExprOp decodeToken(const std::string &token)
         return it->second;
     } else if (token.size() == 1 && token[0] >= 'a' && token[0] <= 'z') {
         return{ ExprOpType::MEM_LOAD_U8, token[0] >= 'x' ? token[0] - 'x' : token[0] - 'a' + 3 };
+    } else if (token.size() == 1) {
+        switch (token[0]) {
+        case 'N':
+            return{ ExprOpType::MEM_LOAD_CONST, CONST_N };
+        case 'Y':
+            return{ ExprOpType::MEM_LOAD_CONST, CONST_Y };
+        case 'X':
+            return{ ExprOpType::MEM_LOAD_F32, CLIP_X };
+        default:
+            throw std::runtime_error("illegal single char token: " + token);
+        }
     } else if (token.substr(0, 3) == "dup" || token.substr(0, 4) == "swap") {
         size_t prefix = token[0] == 'd' ? 3 : 4;
         size_t count = 0;
@@ -1893,7 +1985,10 @@ ExprOp decodeToken(const std::string &token)
         if (idx < 0 || prefix + count != token.size())
             throw std::runtime_error("illegal token: " + token);
         return{ token[0] == 'd' ? ExprOpType::DUP : ExprOpType::SWAP, idx };
-    } else {
+    } else if (token.size() >= 3 && token[0] >= 'a' && token[0] <= 'z' && token[1] == '.') {
+        // frame property access
+        return{ ExprOpType::MEM_LOAD_CONST, CONST_FIRST_PROP, { token[0] >= 'x' ? token[0] - 'x' : token[0] - 'a' + 3, token.substr(2) } };
+    }  else {
         float f;
         std::string s;
         std::istringstream numStream(token);
@@ -1914,6 +2009,7 @@ ExpressionTree parseExpr(const std::string &expr, const VSVideoInfo * const *vi,
         0, // MEM_LOAD_F16
         0, // MEM_LOAD_F32
         0, // CONSTANT
+        0, // MEM_LOAD_CONST
         0, // MEM_STORE_U8
         0, // MEM_STORE_U16
         0, // MEM_STORE_F16
@@ -1949,7 +2045,13 @@ ExpressionTree parseExpr(const std::string &expr, const VSVideoInfo * const *vi,
     std::vector<ExpressionTreeNode *> stack;
 
     for (const std::string &tok : tokens) {
-        ExprOp op = decodeToken(tok);
+        Token token = decodeToken(tok);
+        auto &op = token.op;
+
+        // assign fconsts index
+        if (op.type == ExprOpType::MEM_LOAD_CONST && op.imm.u == CONST_FIRST_PROP) {
+            op.imm.u = tree.addPropAccess(token.prop);
+        }
 
         // Check validity.
         if (op.type == ExprOpType::MEM_LOAD_U8 && op.imm.i >= numInputs)
@@ -2033,6 +2135,7 @@ bool isConstantExpr(const ExpressionTreeNode &node)
     case ExprOpType::MEM_LOAD_U16:
     case ExprOpType::MEM_LOAD_F16:
     case ExprOpType::MEM_LOAD_F32:
+    case ExprOpType::MEM_LOAD_CONST:
         return false;
     case ExprOpType::CONSTANT:
         return true;
@@ -3063,7 +3166,7 @@ void renameRegisters(std::vector<ExprInstruction> &code)
     }
 }
 
-std::vector<ExprInstruction> compile(ExpressionTree &tree, const VSFormat *format)
+std::vector<ExprInstruction> compile(ExpressionTree &tree, const VSFormat *format, int numInputs, bool &usedX)
 {
     std::vector<ExprInstruction> code;
     std::unordered_set<int> found;
@@ -3129,6 +3232,16 @@ std::vector<ExprInstruction> compile(ExpressionTree &tree, const VSFormat *forma
     code.push_back(store);
 
     renameRegisters(code);
+
+    // compute usedX and fix its index.
+    usedX = false;
+    for (auto &inst: code) {
+        if (inst.op.type == ExprOpType::MEM_LOAD_F32 && inst.op.imm.u == CLIP_X) {
+            inst.op.imm.u = numInputs;
+            usedX = true;
+        }
+    }
+
     return code;
 }
 
@@ -3156,7 +3269,7 @@ static const VSFrameRef *VS_CC exprGetFrame(int n, int activationReason, void **
         const VSFrameRef *srcf[3] = { d->plane[0] != poCopy ? nullptr : src[0], d->plane[1] != poCopy ? nullptr : src[0], d->plane[2] != poCopy ? nullptr : src[0] };
         VSFrameRef *dst = vsapi->newVideoFrame2(fi, width, height, srcf, planes, src[0], core);
 
-        const uint8_t *srcp[MAX_EXPR_INPUTS] = {};
+        const uint8_t *srcp[MAX_EXPR_INPUTS+1] = {};
         int src_stride[MAX_EXPR_INPUTS] = {};
         alignas(32) intptr_t ptroffsets[((MAX_EXPR_INPUTS + 1) + 7) & ~7] = { d->vi.format->bytesPerSample * 8 };
 
@@ -3177,6 +3290,21 @@ static const VSFrameRef *VS_CC exprGetFrame(int n, int activationReason, void **
             int h = vsapi->getFrameHeight(dst, plane);
             int w = vsapi->getFrameWidth(dst, plane);
 
+            // reserved slots: [0] is current frame number, [1] is current row.
+            std::vector<float> frame_consts(CONST_FIRST_PROP, 0.0f);
+            frame_consts[CONST_N] = n;
+            frame_consts.reserve(CONST_FIRST_PROP + d->pa[plane].size());
+            for (const auto &pa : d->pa[plane]) {
+                auto m = vsapi->getFramePropsRO(src[pa.clip]);
+                int err = 0;
+                float val = vsapi->propGetInt(m, pa.name.c_str(), 0, &err);
+                if (err == peType)
+                    val = vsapi->propGetFloat(m, pa.name.c_str(), 0, &err);
+                if (err != 0)
+                    val = std::nanf(""); // XXX: should we warn the user?
+                frame_consts.push_back(val);
+            }
+
             if (d->proc[plane]) {
                 ExprData::ProcessLineProc proc = d->proc[plane];
                 int niterations = (w + 7) / 8;
@@ -3185,20 +3313,25 @@ static const VSFrameRef *VS_CC exprGetFrame(int n, int activationReason, void **
                     if (d->node[i])
                         ptroffsets[i + 1] = vsapi->getFrameFormat(src[i])->bytesPerSample * 8;
                 }
+                ptroffsets[numInputs + 1] = 8 * sizeof(float);
 
                 for (int y = 0; y < h; y++) {
-                    alignas(32) uint8_t *rwptrs[((MAX_EXPR_INPUTS + 1) + 7) & ~7] = { dstp + dst_stride * y };
+                    frame_consts[CONST_Y] = y;
+                    alignas(32) uint8_t *rwptrs[((MAX_EXPR_INPUTS + 1 + 1) + 7) & ~7] = { dstp + dst_stride * y };
                     for (int i = 0; i < numInputs; i++) {
                         rwptrs[i + 1] = const_cast<uint8_t *>(srcp[i] + src_stride[i] * y);
                     }
-                    proc(rwptrs, ptroffsets, niterations);
+                    rwptrs[numInputs + 1] = reinterpret_cast<uint8_t *>(d->Xs);
+                    proc(rwptrs, ptroffsets, &frame_consts[0], niterations);
                 }
             } else {
                 ExprInterpreter interpreter(d->bytecode[plane].data(), d->bytecode[plane].size());
 
+                srcp[numInputs] = reinterpret_cast<const uint8_t *>(d->Xs);
                 for (int y = 0; y < h; y++) {
+                    frame_consts[CONST_Y] = y;
                     for (int x = 0; x < w; x++) {
-                        interpreter.eval(srcp, dstp, x);
+                        interpreter.eval(srcp, dstp, &frame_consts[0], x);
                     }
 
                     for (int i = 0; i < numInputs; i++) {
@@ -3313,14 +3446,24 @@ static void VS_CC exprCreate(const VSMap *in, VSMap *out, void *userData, VSCore
                 continue;
 
             auto tree = parseExpr(expr[i], vi, d->numInputs);
-            d->bytecode[i] = compile(tree, d->vi.format);
+            bool usedX;
+            d->bytecode[i] = compile(tree, d->vi.format, d->numInputs, usedX);
+            d->pa[i] = tree.getPropAccess();
+
+            if (usedX) {
+                int w = (d->vi.width + 63) & ~63;
+                float *xs = (float *)vs_aligned_malloc(w * sizeof(float), 64);
+                for (i = 0; i < w; i++)
+                    xs[i] = i;
+                d->Xs = xs;
+            }
 
             int cpulevel = vs_get_cpulevel(core);
             if (cpulevel > VS_CPU_LEVEL_NONE) {
                 for (int i = 0; i < d->vi.format->numPlanes; i++) {
                     if (d->plane[i] == poProcess) {
 #ifdef VS_TARGET_CPU_X86
-                        std::unique_ptr<ExprCompiler> compiler = make_compiler(d->numInputs, cpulevel);
+                        std::unique_ptr<ExprCompiler> compiler = make_compiler(d->numInputs + (usedX ? 1:0), cpulevel);
                         for (auto op : d->bytecode[i]) {
                             compiler->addInstruction(op);
                         }
