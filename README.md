@@ -7,7 +7,9 @@ Expr
 `akarin.Expr(clip[] clips, string[] expr[, int format])`
 
 This works just like [`std.Expr`](http://www.vapoursynth.com/doc/functions/expr.html) (esp. with the same SIMD JIT support on x86 hosts), with the following additions:
-- use `x.PlaneStatsAverage` to load the `PlaneStatsAverage` frame property of the current frame in the given clip `x`. Any scalar numerical frame properties can be used;
+- use `x.PlaneStatsAverage` to load the `PlaneStatsAverage` frame property of the current frame in the given clip `x`.
+  - Any scalar numerical frame properties can be used;
+  - If the property does not exist for a frame, the value will be NaN, which will be clamped to the maximum value.
 - use the `N` operator to load the current frame number;
 - use the `X` and `Y` operators to load the current column / row (aka `mt_lutspa`);
 
