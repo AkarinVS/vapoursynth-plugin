@@ -32,7 +32,7 @@ int vs_get_cpulevel(const struct VSCore *core) {
         if (!s) level = VS_CPU_LEVEL_MAX;
         else {
             level = atoi(s);
-            vsDebug("forced cpu level to %d (%s).\n", level, vs_cpulevel_to_str(level));
+            vsDebug("forced MAX cpu level to %d (%s).\n", level, vs_cpulevel_to_str(level));
         }
     }
     return level;
