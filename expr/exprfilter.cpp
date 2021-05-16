@@ -2062,17 +2062,6 @@ Token decodeToken(const std::string &token)
         return it->second;
     } else if (token.size() == 1 && token[0] >= 'a' && token[0] <= 'z') {
         return{ ExprOpType::MEM_LOAD_U8, token[0] >= 'x' ? token[0] - 'x' : token[0] - 'a' + 3 };
-    } else if (token.size() == 1) {
-        switch (token[0]) {
-        case 'N':
-            return{ ExprOpType::MEM_LOAD_CONST, CONST_N };
-        case 'Y':
-            return{ ExprOpType::MEM_LOAD_CONST, CONST_Y };
-        case 'X':
-            return{ ExprOpType::MEM_LOAD_F32, CLIP_X };
-        default:
-            throw std::runtime_error("illegal single char token: " + token);
-        }
     } else if (token.substr(0, 3) == "dup" || token.substr(0, 4) == "swap") {
         size_t prefix = token[0] == 'd' ? 3 : 4;
         size_t count = 0;
@@ -2091,6 +2080,16 @@ Token decodeToken(const std::string &token)
         // frame property access
         return{ ExprOpType::MEM_LOAD_CONST, CONST_FIRST_PROP, { token[0] >= 'x' ? token[0] - 'x' : token[0] - 'a' + 3, token.substr(2) } };
     }  else {
+        if (token.size() == 1) {
+            switch (token[0]) {
+                case 'N':
+                    return{ ExprOpType::MEM_LOAD_CONST, CONST_N };
+                case 'Y':
+                    return{ ExprOpType::MEM_LOAD_CONST, CONST_Y };
+                case 'X':
+                    return{ ExprOpType::MEM_LOAD_F32, CLIP_X };
+            }
+        }
         float f;
         std::string s;
         std::istringstream numStream(token);
