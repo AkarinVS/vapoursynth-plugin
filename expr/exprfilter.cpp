@@ -2002,7 +2002,7 @@ public:
             case ExprOpType::LOG: DST = std::log(SRC1); break;
             case ExprOpType::POW: DST = std::pow(SRC1, SRC2); break;
             case ExprOpType::SQRT: DST = std::sqrt(SRC1); break;
-            case ExprOpType::SIN: DST = std::sinf(SRC1); break;
+            case ExprOpType::SIN: DST = std::sin(SRC1); break;
             case ExprOpType::ABS: DST = std::fabs(SRC1); break;
             case ExprOpType::NEG: DST = -SRC1; break;
             case ExprOpType::CMP:
