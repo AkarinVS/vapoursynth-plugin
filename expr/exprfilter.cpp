@@ -61,13 +61,13 @@ enum class ExprOpType {
 
     // Arithmetic primitives.
     ADD, SUB, MUL, DIV, FMA, SQRT, ABS, NEG, MAX, MIN, CMP,
-    SIN,
 
     // Logical operators.
     AND, OR, XOR, NOT,
 
     // Transcendental functions.
     EXP, LOG, POW,
+    SIN,
 
     // Ternary operator
     TERNARY,
@@ -257,7 +257,6 @@ public:
         case ExprOpType::SQRT: sqrt(insn); break;
         case ExprOpType::ABS: abs(insn); break;
         case ExprOpType::NEG: neg(insn); break;
-        case ExprOpType::SIN: sin(insn); break;
         case ExprOpType::NOT: not_(insn); break;
         case ExprOpType::AND: and_(insn); break;
         case ExprOpType::OR: or_(insn); break;
@@ -267,6 +266,7 @@ public:
         case ExprOpType::EXP: exp(insn); break;
         case ExprOpType::LOG: log(insn); break;
         case ExprOpType::POW: pow(insn); break;
+        case ExprOpType::SIN: sin(insn); break;
         default: vsFatal("illegal opcode"); break;
         }
     }
@@ -2002,8 +2002,8 @@ public:
             case ExprOpType::LOG: DST = std::log(SRC1); break;
             case ExprOpType::POW: DST = std::pow(SRC1, SRC2); break;
             case ExprOpType::SQRT: DST = std::sqrt(SRC1); break;
-            case ExprOpType::ABS: DST = std::fabs(SRC1); break;
             case ExprOpType::SIN: DST = std::sinf(SRC1); break;
+            case ExprOpType::ABS: DST = std::fabs(SRC1); break;
             case ExprOpType::NEG: DST = -SRC1; break;
             case ExprOpType::CMP:
                 switch (static_cast<ComparisonType>(insn.op.imm.u)) {
@@ -2198,9 +2198,9 @@ Token decodeToken(const std::string &token)
         { "exp",  { ExprOpType::EXP } },
         { "log",  { ExprOpType::LOG } },
         { "pow",  { ExprOpType::POW } },
+        { "sin",  { ExprOpType::SIN } },
         { "dup",  { ExprOpType::DUP, 0 } },
         { "swap", { ExprOpType::SWAP, 1 } },
-        { "sin",  { ExprOpType::SIN } },
     };
 
     auto it = simple.find(token);
@@ -2272,7 +2272,6 @@ ExpressionTree parseExpr(const std::string &expr, const VSVideoInfo * const *vi,
         2, // MAX
         2, // MIN
         2, // CMP
-        1, // SIN
         2, // AND
         2, // OR
         2, // XOR
@@ -2280,6 +2279,7 @@ ExpressionTree parseExpr(const std::string &expr, const VSVideoInfo * const *vi,
         1, // EXP
         1, // LOG
         2, // POW
+        1, // SIN
         3, // TERNARY
         0, // MUX
         0, // DUP
