@@ -22,6 +22,7 @@
 #include <cmath>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <locale>
 #include <map>
 #include <memory>
@@ -192,7 +193,7 @@ struct ExprData {
 #ifdef VS_TARGET_OS_WINDOWS
                 VirtualFree((LPVOID)proc[i], 0, MEM_RELEASE);
 #else
-                munmap((void *)proc[i], 0);
+                munmap((void *)proc[i], procSize[i]);
 #endif
             }
         }
