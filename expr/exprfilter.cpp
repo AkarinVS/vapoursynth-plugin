@@ -22,6 +22,7 @@
 #include <cmath>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <locale>
 #include <map>
 #include <memory>
@@ -60,13 +61,13 @@ enum class ExprOpType {
 
     // Arithmetic primitives.
     ADD, SUB, MUL, DIV, FMA, SQRT, ABS, NEG, MAX, MIN, CMP,
-    SIN,
 
     // Logical operators.
     AND, OR, XOR, NOT,
 
     // Transcendental functions.
     EXP, LOG, POW,
+    SIN, COS,
 
     // Ternary operator
     TERNARY,
@@ -192,7 +193,7 @@ struct ExprData {
 #ifdef VS_TARGET_OS_WINDOWS
                 VirtualFree((LPVOID)proc[i], 0, MEM_RELEASE);
 #else
-                munmap((void *)proc[i], 0);
+                munmap((void *)proc[i], procSize[i]);
 #endif
             }
         }
@@ -223,6 +224,7 @@ class ExprCompiler {
     virtual void abs(const ExprInstruction &insn) = 0;
     virtual void neg(const ExprInstruction &insn) = 0;
     virtual void sin(const ExprInstruction &insn) = 0;
+    virtual void cos(const ExprInstruction &insn) = 0;
     virtual void not_(const ExprInstruction &insn) = 0;
     virtual void and_(const ExprInstruction &insn) = 0;
     virtual void or_(const ExprInstruction &insn) = 0;
@@ -256,7 +258,6 @@ public:
         case ExprOpType::SQRT: sqrt(insn); break;
         case ExprOpType::ABS: abs(insn); break;
         case ExprOpType::NEG: neg(insn); break;
-        case ExprOpType::SIN: sin(insn); break;
         case ExprOpType::NOT: not_(insn); break;
         case ExprOpType::AND: and_(insn); break;
         case ExprOpType::OR: or_(insn); break;
@@ -266,6 +267,8 @@ public:
         case ExprOpType::EXP: exp(insn); break;
         case ExprOpType::LOG: log(insn); break;
         case ExprOpType::POW: pow(insn); break;
+        case ExprOpType::SIN: sin(insn); break;
+        case ExprOpType::COS: cos(insn); break;
         default: vsFatal("illegal opcode"); break;
         }
     }
@@ -288,7 +291,7 @@ class ExprCompiler128 : public ExprCompiler, private jitasm::function<void, Expr
     friend struct jitasm::function_cdecl<void, ExprCompiler128, uint8_t *, const intptr_t *, const float *, intptr_t>;
 
 #define SPLAT(x) { (x), (x), (x), (x) }
-    static constexpr ExprUnion constData alignas(16)[52][4] = {
+    static constexpr ExprUnion constData alignas(16)[56][4] = {
         SPLAT(0x7FFFFFFF), // absmask
         SPLAT(0x80000000), // negmask
         SPLAT(0x7F), // x7F
@@ -341,6 +344,10 @@ class ExprCompiler128 : public ExprCompiler, private jitasm::function<void, Expr
         SPLAT(0x3c08876a), // float_sinC5
         SPLAT(0xb94fb7ff), // float_sinC7
         SPLAT(0x362edef8), // float_sinC9
+        SPLAT(static_cast<int32_t>(0xBEFFFFE2)), // float_cosC2
+        SPLAT(0x3D2AA73C), // float_cosC4
+        SPLAT(static_cast<int32_t>(0XBAB58D50)), // float_cosC6
+        SPLAT(0x37C1AD76), // float_cosC8
     };
 
     struct ConstantIndex {
@@ -398,6 +405,10 @@ class ExprCompiler128 : public ExprCompiler, private jitasm::function<void, Expr
         static constexpr int float_sinC5 = float_sinC3 + 1;
         static constexpr int float_sinC7 = float_sinC3 + 2;
         static constexpr int float_sinC9 = float_sinC3 + 3;
+        static constexpr int float_cosC2 = 52;
+        static constexpr int float_cosC4 = float_cosC2 + 1;
+        static constexpr int float_cosC6 = float_cosC2 + 2;
+        static constexpr int float_cosC8 = float_cosC2 + 3;
     };
 #undef SPLAT
 
@@ -1070,50 +1081,59 @@ do { \
         });
     }
 
-    void sin_(XmmReg y, XmmReg x, Reg constants)
+    void sincos_(bool issin, XmmReg y, XmmReg x, Reg constants)
     {
         XmmReg t1, sign, t2, t3, t4;
         // Remove sign
-        VEX1(movaps, sign, xmmword_ptr[constants + ConstantIndex::absmask * 16]);
-        VEX1(movaps, t1, sign);
-        VEX2(andnps, sign, sign, x);
-        VEX1(movaps, t2, xmmword_ptr[constants + ConstantIndex::float_invpi * 16]);
+        VEX1(movaps, t1, xmmword_ptr[constants + ConstantIndex::absmask * 16]);
+        if (issin) {
+            VEX1(movaps, sign, t1);
+            VEX2(andnps, sign, sign, x);
+        } else {
+            VEX2(pxor, sign, sign, sign);
+        }
         VEX2(andps, t1, t1, x);
         // Range reduction
         VEX1(movaps, t3, xmmword_ptr[constants + ConstantIndex::float_rintf * 16]);
-        VEX2(mulps, t2, t2, t1);
+        VEX2(mulps, t2, t1, xmmword_ptr[constants + ConstantIndex::float_invpi * 16]);
         VEX2(addps, t2, t2, t3);
         VEX1IMM(pslld, t4, t2, 31);
         VEX2(xorps, sign, sign, t4);
         VEX2(subps, t2, t2, t3);
-        VEX1(movaps, t4, xmmword_ptr[constants + ConstantIndex::float_pi1 * 16]);
-        VEX2(mulps, t4, t4, t2);
+        VEX2(mulps, t4, t2, xmmword_ptr[constants + ConstantIndex::float_pi1 * 16]);
         VEX2(subps, t1, t1, t4);
-        VEX1(movaps, t4, xmmword_ptr[constants + ConstantIndex::float_pi2 * 16]);
-        VEX2(mulps, t4, t4, t2);
+        VEX2(mulps, t4, t2, xmmword_ptr[constants + ConstantIndex::float_pi2 * 16]);
         VEX2(subps, t1, t1, t4);
-        VEX1(movaps, t4, xmmword_ptr[constants + ConstantIndex::float_pi3 * 16]);
-        VEX2(mulps, t4, t4, t2);
+        VEX2(mulps, t4, t2, xmmword_ptr[constants + ConstantIndex::float_pi3 * 16]);
         VEX2(subps, t1, t1, t4);
-        VEX1(movaps, t4, xmmword_ptr[constants + ConstantIndex::float_pi4 * 16]);
-        VEX2(mulps, t4, t4, t2);
+        VEX2(mulps, t4, t2, xmmword_ptr[constants + ConstantIndex::float_pi4 * 16]);
         VEX2(subps, t1, t1, t4);
-        // Evaluate minimax polynomial for sin(x) in [-pi/2, pi/2] interval
-        // Y <- X + X * X^2 * (C3 + X^2 * (C5 + X^2 * (C7 + X^2 * C9)))
-        VEX2(mulps, t2, t1, t1);
-        VEX1(movaps, t3, xmmword_ptr[constants + ConstantIndex::float_sinC9 * 16]);
-        VEX2(mulps, t3, t3, t2);
-        VEX1(movaps, t4, xmmword_ptr[constants + ConstantIndex::float_sinC7 * 16]);
-        VEX2(addps, t3, t3, t4);
-        VEX2(mulps, t3, t3, t2);
-        VEX1(movaps, t4, xmmword_ptr[constants + ConstantIndex::float_sinC5 * 16]);
-        VEX2(addps, t3, t3, t4);
-        VEX2(mulps, t3, t3, t2);
-        VEX1(movaps, t4, xmmword_ptr[constants + ConstantIndex::float_sinC3 * 16]);
-        VEX2(addps, t3, t3, t4);
-        VEX2(mulps, t3, t3, t2);
-        VEX2(mulps, t3, t3, t1);
-        VEX2(addps, t1, t1, t3);
+        if (issin) {
+            // Evaluate minimax polynomial for sin(x) in [-pi/2, pi/2] interval
+            // Y <- X + X * X^2 * (C3 + X^2 * (C5 + X^2 * (C7 + X^2 * C9)))
+            VEX2(mulps, t2, t1, t1);
+            VEX2(mulps, t3, t2, xmmword_ptr[constants + ConstantIndex::float_sinC9 * 16]);
+            VEX2(addps, t3, t3, xmmword_ptr[constants + ConstantIndex::float_sinC7 * 16]);
+            VEX2(mulps, t3, t3, t2);
+            VEX2(addps, t3, t3, xmmword_ptr[constants + ConstantIndex::float_sinC5 * 16]);
+            VEX2(mulps, t3, t3, t2);
+            VEX2(addps, t3, t3, xmmword_ptr[constants + ConstantIndex::float_sinC3 * 16]);
+            VEX2(mulps, t3, t3, t2);
+            VEX2(mulps, t3, t3, t1);
+            VEX2(addps, t1, t1, t3);
+        } else {
+            // Evaluate minimax polynomial for cos(x) in [-pi/2, pi/2] interval
+            // Y <- 1 + X^2 * (C2 + X^2 * (C4 + X^2 * (C6 + X^2 * C8)))
+            VEX2(mulps, t1, t1, t1);
+            VEX2(mulps, t2, t1, xmmword_ptr[constants + ConstantIndex::float_cosC8 * 16]);
+            VEX2(addps, t2, t2, xmmword_ptr[constants + ConstantIndex::float_cosC6 * 16]);
+            VEX2(mulps, t2, t2, t1);
+            VEX2(addps, t2, t2, xmmword_ptr[constants + ConstantIndex::float_cosC4 * 16]);
+            VEX2(mulps, t2, t2, t1);
+            VEX2(addps, t2, t2, xmmword_ptr[constants + ConstantIndex::float_cosC2 * 16]);
+            VEX2(mulps, t2, t2, t1);
+            VEX2(addps, t1, t2, xmmword_ptr[constants + ConstantIndex::float_one * 16]);
+        }
         // Apply sign
         VEX2(xorps, y, t1, sign);
     }
@@ -1125,8 +1145,20 @@ do { \
             auto t1 = bytecodeRegs[insn.src1];
             auto t3 = bytecodeRegs[insn.dst];
 
-            sin_(t3.first, t1.first, constants);
-            sin_(t3.second, t1.second, constants);
+            sincos_(true, t3.first, t1.first, constants);
+            sincos_(true, t3.second, t1.second, constants);
+        });
+    }
+
+    void cos(const ExprInstruction &insn) override
+    {
+        deferred.push_back(EMIT()
+        {
+            auto t1 = bytecodeRegs[insn.src1];
+            auto t3 = bytecodeRegs[insn.dst];
+
+            sincos_(false, t3.first, t1.first, constants);
+            sincos_(false, t3.second, t1.second, constants);
         });
     }
 
@@ -1227,7 +1259,7 @@ public:
 #undef EMIT
 };
 
-constexpr ExprUnion ExprCompiler128::constData alignas(16)[52][4];
+constexpr ExprUnion ExprCompiler128::constData alignas(16)[56][4];
 
 class ExprCompiler256 : public ExprCompiler, private jitasm::function<void, ExprCompiler256, uint8_t *, const intptr_t *, const float *, intptr_t> {
     typedef jitasm::function<void, ExprCompiler256, uint8_t *, const intptr_t *, const float *, intptr_t> jit;
@@ -1235,7 +1267,7 @@ class ExprCompiler256 : public ExprCompiler, private jitasm::function<void, Expr
     friend struct jitasm::function_cdecl<void, ExprCompiler256, uint8_t *, const intptr_t *, const float *, intptr_t>;
 
 #define SPLAT(x) { (x), (x), (x), (x), (x), (x), (x), (x) }
-    static constexpr ExprUnion constData alignas(32)[51][8] = {
+    static constexpr ExprUnion constData alignas(32)[55][8] = {
         SPLAT(0x7FFFFFFF), // absmask
         SPLAT(0x80000000), // negmask
         SPLAT(0x7F), // x7F
@@ -1287,6 +1319,10 @@ class ExprCompiler256 : public ExprCompiler, private jitasm::function<void, Expr
         SPLAT(0x3c08876a), // float_sinC5
         SPLAT(0xb94fb7ff), // float_sinC7
         SPLAT(0x362edef8), // float_sinC9
+        SPLAT(static_cast<int32_t>(0xBEFFFFE2)), // float_cosC2
+        SPLAT(0x3D2AA73C), // float_cosC4
+        SPLAT(static_cast<int32_t>(0XBAB58D50)), // float_cosC6
+        SPLAT(0x37C1AD76), // float_cosC8
     };
 
     struct ConstantIndex {
@@ -1343,6 +1379,10 @@ class ExprCompiler256 : public ExprCompiler, private jitasm::function<void, Expr
         static constexpr int float_sinC5 = float_sinC3 + 1;
         static constexpr int float_sinC7 = float_sinC3 + 2;
         static constexpr int float_sinC9 = float_sinC3 + 3;
+        static constexpr int float_cosC2 = 51;
+        static constexpr int float_cosC4 = float_cosC2 + 1;
+        static constexpr int float_cosC6 = float_cosC2 + 2;
+        static constexpr int float_cosC8 = float_cosC2 + 3;
     };
 #undef SPLAT
 
@@ -1803,56 +1843,78 @@ do { \
         });
     }
 
+    void sincos_(bool issin, const ExprInstruction &insn, Reg constants, std::unordered_map<int, YmmReg> &bytecodeRegs)
+    {
+        auto x = bytecodeRegs[insn.src1];
+        auto y = bytecodeRegs[insn.dst];
+        YmmReg t1, sign, t2, t3, t4;
+        // Remove sign
+        vmovaps(t1, ymmword_ptr[constants + ConstantIndex::absmask * 32]);
+        if (issin) {
+            vmovaps(sign, t1);
+            vandnps(sign, sign, x);
+        } else {
+            vxorps(sign, sign, sign);
+        }
+        vandps(t1, t1, x);
+        // Range reduction
+        vmovaps(t3, ymmword_ptr[constants + ConstantIndex::float_rintf * 32]);
+        vmulps(t2, t1, ymmword_ptr[constants + ConstantIndex::float_invpi * 32]);
+        vaddps(t2, t2, t3);
+        vpslld(t4, t2, 31);
+        vxorps(sign, sign, t4);
+        vsubps(t2, t2, t3);
+        vmulps(t4, t2, ymmword_ptr[constants + ConstantIndex::float_pi1 * 32]);
+        vsubps(t1, t1, t4);
+        vmulps(t4, t2, ymmword_ptr[constants + ConstantIndex::float_pi2 * 32]);
+        vsubps(t1, t1, t4);
+        vmulps(t4, t2, ymmword_ptr[constants + ConstantIndex::float_pi3 * 32]);
+        vsubps(t1, t1, t4);
+        vmulps(t4, t2, ymmword_ptr[constants + ConstantIndex::float_pi4 * 32]);
+        vsubps(t1, t1, t4);
+        if (issin) {
+            // Evaluate minimax polynomial for sin(x) in [-pi/2, pi/2] interval
+            // Y <- X + X * X^2 * (C3 + X^2 * (C5 + X^2 * (C7 + X^2 * C9)))
+            vmulps(t2, t1, t1);
+            vmulps(t3, t2, ymmword_ptr[constants + ConstantIndex::float_sinC9 * 32]);
+            vaddps(t3, t3, ymmword_ptr[constants + ConstantIndex::float_sinC7 * 32]);
+            vmulps(t3, t3, t2);
+            vaddps(t3, t3, ymmword_ptr[constants + ConstantIndex::float_sinC5 * 32]);
+            vmulps(t3, t3, t2);
+            vaddps(t3, t3, ymmword_ptr[constants + ConstantIndex::float_sinC3 * 32]);
+            vmulps(t3, t3, t2);
+            vmulps(t3, t3, t1);
+            vaddps(t1, t1, t3);
+        } else {
+            // Evaluate minimax polynomial for cos(x) in [-pi/2, pi/2] interval
+            // Y <- 1 + X^2 * (C2 + X^2 * (C4 + X^2 * (C6 + X^2 * C8)))
+            vmulps(t1, t1, t1);
+            vmulps(t2, t1, ymmword_ptr[constants + ConstantIndex::float_cosC8 * 32]);
+            vaddps(t2, t2, ymmword_ptr[constants + ConstantIndex::float_cosC6 * 32]);
+            vmulps(t2, t2, t1);
+            vaddps(t2, t2, ymmword_ptr[constants + ConstantIndex::float_cosC4 * 32]);
+            vmulps(t2, t2, t1);
+            vaddps(t2, t2, ymmword_ptr[constants + ConstantIndex::float_cosC2 * 32]);
+            vmulps(t2, t2, t1);
+            vaddps(t1, t2, ymmword_ptr[constants + ConstantIndex::float_one * 32]);
+        }
+        // Apply sign
+        vxorps(y, t1, sign);
+    }
+
     void sin(const ExprInstruction &insn) override
     {
         deferred.push_back(EMIT()
         {
-            auto x = bytecodeRegs[insn.src1];
-            auto y = bytecodeRegs[insn.dst];
-            YmmReg t1, sign, t2, t3, t4;
-            // Remove sign
-            vmovaps(sign, ymmword_ptr[constants + ConstantIndex::absmask * 32]);
-            vmovaps(t1, sign);
-            vandnps(sign, sign, x);
-            vmovaps(t2, ymmword_ptr[constants + ConstantIndex::float_invpi * 32]);
-            vandps(t1, t1, x);
-            // Range reduction
-            vmovaps(t3, ymmword_ptr[constants + ConstantIndex::float_rintf * 32]);
-            vmulps(t2, t2, t1);
-            vaddps(t2, t2, t3);
-            vpslld(t4, t2, 31);
-            vxorps(sign, sign, t4);
-            vsubps(t2, t2, t3);
-            vmovaps(t4, ymmword_ptr[constants + ConstantIndex::float_pi1 * 32]);
-            vmulps(t4, t4, t2);
-            vsubps(t1, t1, t4);
-            vmovaps(t4, ymmword_ptr[constants + ConstantIndex::float_pi2 * 32]);
-            vmulps(t4, t4, t2);
-            vsubps(t1, t1, t4);
-            vmovaps(t4, ymmword_ptr[constants + ConstantIndex::float_pi3 * 32]);
-            vmulps(t4, t4, t2);
-            vsubps(t1, t1, t4);
-            vmovaps(t4, ymmword_ptr[constants + ConstantIndex::float_pi4 * 32]);
-            vmulps(t4, t4, t2);
-            vsubps(t1, t1, t4);
-            // Evaluate minimax polynomial for sin(x) in [-pi/2, pi/2] interval
-            // Y <- X + X * X^2 * (C3 + X^2 * (C5 + X^2 * (C7 + X^2 * C9)))
-            vmulps(t2, t1, t1);
-            vmovaps(t3, ymmword_ptr[constants + ConstantIndex::float_sinC9 * 32]);
-            vmulps(t3, t3, t2);
-            vmovaps(t4, ymmword_ptr[constants + ConstantIndex::float_sinC7 * 32]);
-            vaddps(t3, t3, t4);
-            vmulps(t3, t3, t2);
-            vmovaps(t4, ymmword_ptr[constants + ConstantIndex::float_sinC5 * 32]);
-            vaddps(t3, t3, t4);
-            vmulps(t3, t3, t2);
-            vmovaps(t4, ymmword_ptr[constants + ConstantIndex::float_sinC3 * 32]);
-            vaddps(t3, t3, t4);
-            vmulps(t3, t3, t2);
-            vmulps(t3, t3, t1);
-            vaddps(t1, t1, t3);
-            // Apply sign
-            vxorps(y, t1, sign);
+            sincos_(true, insn, constants, bytecodeRegs);
+        });
+    }
+
+    void cos(const ExprInstruction &insn) override
+    {
+        deferred.push_back(EMIT()
+        {
+            sincos_(false, insn, constants, bytecodeRegs);
         });
     }
 
@@ -1945,7 +2007,7 @@ public:
 #undef EMIT
 };
 
-constexpr ExprUnion ExprCompiler256::constData alignas(32)[51][8];
+constexpr ExprUnion ExprCompiler256::constData alignas(32)[55][8];
 
 std::unique_ptr<ExprCompiler> make_compiler(int numInputs, int cpulevel)
 {
@@ -2019,8 +2081,9 @@ public:
             case ExprOpType::LOG: DST = std::log(SRC1); break;
             case ExprOpType::POW: DST = std::pow(SRC1, SRC2); break;
             case ExprOpType::SQRT: DST = std::sqrt(SRC1); break;
+            case ExprOpType::SIN: DST = std::sin(SRC1); break;
+            case ExprOpType::COS: DST = std::cos(SRC1); break;
             case ExprOpType::ABS: DST = std::fabs(SRC1); break;
-            case ExprOpType::SIN: DST = std::sinf(SRC1); break;
             case ExprOpType::NEG: DST = -SRC1; break;
             case ExprOpType::CMP:
                 switch (static_cast<ComparisonType>(insn.op.imm.u)) {
@@ -2215,9 +2278,10 @@ Token decodeToken(const std::string &token)
         { "exp",  { ExprOpType::EXP } },
         { "log",  { ExprOpType::LOG } },
         { "pow",  { ExprOpType::POW } },
+        { "sin",  { ExprOpType::SIN } },
+        { "cos",  { ExprOpType::COS } },
         { "dup",  { ExprOpType::DUP, 0 } },
         { "swap", { ExprOpType::SWAP, 1 } },
-        { "sin",  { ExprOpType::SIN } },
     };
 
     auto it = simple.find(token);
@@ -2289,7 +2353,6 @@ ExpressionTree parseExpr(const std::string &expr, const VSVideoInfo * const *vi,
         2, // MAX
         2, // MIN
         2, // CMP
-        1, // SIN
         2, // AND
         2, // OR
         2, // XOR
@@ -2297,6 +2360,8 @@ ExpressionTree parseExpr(const std::string &expr, const VSVideoInfo * const *vi,
         1, // EXP
         1, // LOG
         2, // POW
+        1, // SIN
+        1, // COS
         3, // TERNARY
         0, // MUX
         0, // DUP
