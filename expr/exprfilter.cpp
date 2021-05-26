@@ -62,6 +62,9 @@ enum class ExprOpType {
     // Arithmetic primitives.
     ADD, SUB, MUL, DIV, MOD, FMA, SQRT, ABS, NEG, MAX, MIN, CMP,
 
+    // Integer conversions.
+    TRUNC, ROUND,
+
     // Logical operators.
     AND, OR, XOR, NOT,
 
@@ -224,17 +227,19 @@ class ExprCompiler {
     virtual void sqrt(const ExprInstruction &insn) = 0;
     virtual void abs(const ExprInstruction &insn) = 0;
     virtual void neg(const ExprInstruction &insn) = 0;
-    virtual void sin(const ExprInstruction &insn) = 0;
-    virtual void cos(const ExprInstruction &insn) = 0;
     virtual void not_(const ExprInstruction &insn) = 0;
     virtual void and_(const ExprInstruction &insn) = 0;
     virtual void or_(const ExprInstruction &insn) = 0;
     virtual void xor_(const ExprInstruction &insn) = 0;
     virtual void cmp(const ExprInstruction &insn) = 0;
     virtual void ternary(const ExprInstruction &insn) = 0;
+    virtual void trunc(const ExprInstruction &insn) = 0;
+    virtual void round(const ExprInstruction &insn) = 0;
     virtual void exp(const ExprInstruction &insn) = 0;
     virtual void log(const ExprInstruction &insn) = 0;
     virtual void pow(const ExprInstruction &insn) = 0;
+    virtual void sin(const ExprInstruction &insn) = 0;
+    virtual void cos(const ExprInstruction &insn) = 0;
 public:
     void addInstruction(const ExprInstruction &insn)
     {
@@ -265,6 +270,8 @@ public:
         case ExprOpType::OR: or_(insn); break;
         case ExprOpType::XOR: xor_(insn); break;
         case ExprOpType::CMP: cmp(insn); break;
+        case ExprOpType::TRUNC: trunc(insn); break;
+        case ExprOpType::ROUND: round(insn); break;
         case ExprOpType::TERNARY: ternary(insn); break;
         case ExprOpType::EXP: exp(insn); break;
         case ExprOpType::LOG: log(insn); break;
@@ -793,6 +800,35 @@ do { \
         });
     }
 #undef BINARYOP
+
+    void truncround_(bool istrunc, const ExprInstruction &insn, std::unordered_map<int, std::pair<XmmReg, XmmReg>> bytecodeRegs)
+    {
+        auto src = bytecodeRegs[insn.src1];
+        auto dst = bytecodeRegs[insn.dst];
+        if (istrunc) {
+            VEX1(cvttps2dq, dst.first, src.first);
+            VEX1(cvttps2dq, dst.second, src.second);
+        } else {
+            VEX1(cvtps2dq, dst.first, src.first);
+            VEX1(cvtps2dq, dst.second, src.second);
+        }
+        VEX1(cvtdq2ps, dst.first, dst.first);
+        VEX1(cvtdq2ps, dst.second, dst.second);
+    }
+    void trunc(const ExprInstruction &insn) override
+    {
+        deferred.push_back(EMIT()
+        {
+            truncround_(true, insn, bytecodeRegs);
+        });
+    }
+    void round(const ExprInstruction &insn) override
+    {
+        deferred.push_back(EMIT()
+        {
+            truncround_(false, insn, bytecodeRegs);
+        });
+    }
 
     void sqrt(const ExprInstruction &insn) override
     {
@@ -1675,6 +1711,31 @@ do { \
     }
 #undef BINARYOP
 
+    void truncround_(bool istrunc, const ExprInstruction &insn, std::unordered_map<int, YmmReg> &bytecodeRegs)
+    {
+        auto src = bytecodeRegs[insn.src1];
+        auto dst = bytecodeRegs[insn.dst];
+        if (istrunc)
+            vcvttps2dq(dst, src);
+        else
+            vcvtps2dq(dst, src);
+        vcvtdq2ps(dst, dst);
+    }
+    void trunc(const ExprInstruction &insn) override
+    {
+        deferred.push_back(EMIT()
+        {
+            truncround_(true, insn, bytecodeRegs);
+        });
+    }
+    void round(const ExprInstruction &insn) override
+    {
+        deferred.push_back(EMIT()
+        {
+            truncround_(false, insn, bytecodeRegs);
+        });
+    }
+
     void sqrt(const ExprInstruction &insn) override
     {
         deferred.push_back(EMIT()
@@ -2145,6 +2206,8 @@ public:
                 case ComparisonType::NLE: DST = bool2float(SRC1 > SRC2); break;
                 }
                 break;
+            case ExprOpType::TRUNC: DST = std::trunc(SRC1); break;
+            case ExprOpType::ROUND: DST = std::round(SRC1); break;
             case ExprOpType::TERNARY: DST = float2bool(SRC1) ? SRC2 : SRC3; break;
             case ExprOpType::AND: DST = bool2float((float2bool(SRC1) && float2bool(SRC2))); break;
             case ExprOpType::OR:  DST = bool2float((float2bool(SRC1) || float2bool(SRC2))); break;
@@ -2331,6 +2394,8 @@ Token decodeToken(const std::string &token)
         { "pow",  { ExprOpType::POW } },
         { "sin",  { ExprOpType::SIN } },
         { "cos",  { ExprOpType::COS } },
+        { "trunc",  { ExprOpType::TRUNC } },
+        { "round",  { ExprOpType::ROUND } },
         { "dup",  { ExprOpType::DUP, 0 } },
         { "swap", { ExprOpType::SWAP, 1 } },
     };
@@ -2405,6 +2470,8 @@ ExpressionTree parseExpr(const std::string &expr, const VSVideoInfo * const *vi,
         2, // MAX
         2, // MIN
         2, // CMP
+        1, // TRUNC
+        1, // ROUND
         2, // AND
         2, // OR
         2, // XOR
