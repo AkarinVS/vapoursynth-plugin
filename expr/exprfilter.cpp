@@ -60,7 +60,7 @@ enum class ExprOpType {
     MEM_STORE_U8, MEM_STORE_U16, MEM_STORE_F16, MEM_STORE_F32,
 
     // Arithmetic primitives.
-    ADD, SUB, MUL, DIV, FMA, SQRT, ABS, NEG, MAX, MIN, CMP,
+    ADD, SUB, MUL, DIV, MOD, FMA, SQRT, ABS, NEG, MAX, MIN, CMP,
 
     // Logical operators.
     AND, OR, XOR, NOT,
@@ -217,6 +217,7 @@ class ExprCompiler {
     virtual void sub(const ExprInstruction &insn) = 0;
     virtual void mul(const ExprInstruction &insn) = 0;
     virtual void div(const ExprInstruction &insn) = 0;
+    virtual void mod(const ExprInstruction &insn) = 0;
     virtual void fma(const ExprInstruction &insn) = 0;
     virtual void max(const ExprInstruction &insn) = 0;
     virtual void min(const ExprInstruction &insn) = 0;
@@ -252,6 +253,7 @@ public:
         case ExprOpType::SUB: sub(insn); break;
         case ExprOpType::MUL: mul(insn); break;
         case ExprOpType::DIV: div(insn); break;
+        case ExprOpType::MOD: mod(insn); break;
         case ExprOpType::FMA: fma(insn); break;
         case ExprOpType::MAX: max(insn); break;
         case ExprOpType::MIN: min(insn); break;
@@ -679,6 +681,36 @@ do { \
         deferred.push_back(EMIT()
         {
             BINARYOP(divps);
+        });
+    }
+
+    void mod(const ExprInstruction &insn) override
+    {
+        deferred.push_back(EMIT()
+        {
+            auto s1 = bytecodeRegs[insn.src1];
+            auto s2 = bytecodeRegs[insn.src2];
+            auto dst = bytecodeRegs[insn.dst];
+            XmmReg t0, t1, s2f, s2s;
+            VEX1(movaps, s2f, s2.first);
+            VEX1(movaps, s2s, s2.second);
+            VEX1(movaps, dst.first, s1.first);
+            VEX1(movaps, dst.second, s1.second);
+            VEX2(divps, t0, dst.first, s2f);
+            VEX2(divps, t1, dst.second, s2s);
+            VEX1(cvttps2dq, t0, t0);
+            VEX1(cvttps2dq, t1, t1);
+            VEX1(cvtdq2ps, t0, t0);
+            VEX1(cvtdq2ps, t1, t1);
+            if (cpuFeatures.fma3) {
+                vfnmadd231ps(dst.first, t0, s2f);
+                vfnmadd231ps(dst.second, t1, s2s);
+            } else {
+                VEX2(mulps, t0, t0, s2f);
+                VEX2(mulps, t1, t1, s2s);
+                VEX2(subps, dst.first, dst.first, t0);
+                VEX2(subps, dst.second, dst.second, t1);
+            }
         });
     }
 
@@ -1574,6 +1606,23 @@ do { \
         });
     }
 
+    void mod(const ExprInstruction &insn) override
+    {
+        deferred.push_back(EMIT()
+        {
+            auto s1 = bytecodeRegs[insn.src1];
+            auto s2 = bytecodeRegs[insn.src2];
+            auto dst = bytecodeRegs[insn.dst];
+            YmmReg t0, t1;
+            vmovaps(t1, s2);
+            vmovaps(dst, s1);
+            vdivps(t0, dst, t1);
+            vcvttps2dq(t0, t0);
+            vcvtdq2ps(t0, t0);
+            vfnmadd231ps(dst, t0, t1);
+        });
+    }
+
     void fma(const ExprInstruction &insn) override
     {
         deferred.push_back(EMIT()
@@ -2067,6 +2116,7 @@ public:
             case ExprOpType::SUB: DST = SRC1 - SRC2; break;
             case ExprOpType::MUL: DST = SRC1 * SRC2; break;
             case ExprOpType::DIV: DST = SRC1 / SRC2; break;
+            case ExprOpType::MOD: DST = std::fmod(SRC1, SRC2); break;
             case ExprOpType::FMA:
                 switch (static_cast<FMAType>(insn.op.imm.u)) {
                 case FMAType::FMADD: DST = SRC2 * SRC3 + SRC1; break;
@@ -2261,6 +2311,7 @@ Token decodeToken(const std::string &token)
         { "-",    { ExprOpType::SUB } },
         { "*",    { ExprOpType::MUL } },
         { "/",    { ExprOpType::DIV } } ,
+        { "%",    { ExprOpType::MOD } } ,
         { "sqrt", { ExprOpType::SQRT } },
         { "abs",  { ExprOpType::ABS } },
         { "max",  { ExprOpType::MAX } },
@@ -2346,6 +2397,7 @@ ExpressionTree parseExpr(const std::string &expr, const VSVideoInfo * const *vi,
         2, // SUB
         2, // MUL
         2, // DIV
+        2, // MOD
         3, // FMA
         1, // SQRT
         1, // ABS
