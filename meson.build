@@ -4,6 +4,14 @@ project('Plugin', 'cpp',
   version: '8'
 )
 
+version_h = declare_dependency(
+    sources: vcs_tag(
+        command: ['git', 'describe', '--tags', '--long', '--always'],
+        input: 'version.h.in',
+        output: 'version.h'
+    )
+)
+
 sources = [
   # expr
   'expr/vslog.cpp',
@@ -23,7 +31,7 @@ if host_machine.cpu_family().startswith('x86')
 endif
 
 shared_module('akarin', sources,
-  dependencies: vapoursynth_dep,
+  dependencies: [ vapoursynth_dep, version_h ],
   link_with: libs,
   install: true,
   install_dir: join_paths(vapoursynth_dep.get_pkgconfig_variable('libdir'), 'vapoursynth'),

@@ -40,6 +40,7 @@
 #include "internalfilters.h"
 #include "vslog.h"
 #include "kernel/cpulevel.h"
+#include "version.h"
 
 #ifdef VS_TARGET_CPU_X86
 #include <immintrin.h>
@@ -80,6 +81,10 @@ enum class ExprOpType {
 
     // Stack helpers.
     DUP, SWAP,
+};
+
+std::vector<std::string> features = {
+    "sin", "cos", "N", "X", "Y", "%", "trunc", "round", "x.property"
 };
 
 enum class FMAType {
@@ -3910,6 +3915,14 @@ static void VS_CC exprCreate(const VSMap *in, VSMap *out, void *userData, VSCore
     vsapi->createFilter(in, out, "Expr", exprInit, exprGetFrame, exprFree, fmParallel, 0, d.release(), core);
 }
 
+void VS_CC versionCreate(const VSMap *in, VSMap *out, void *user_data, VSCore *core, const VSAPI *vsapi)
+{
+    vsapi->propSetData(out, "version", VERSION, -1, paAppend);
+    vsapi->propSetData(out, "expr_backend", "jitasm", -1, paAppend);
+    for (const auto &f : features)
+        vsapi->propSetData(out, "expr_features", f.c_str(), -1, paAppend);
+}
+
 } // namespace
 
 
@@ -3919,4 +3932,5 @@ static void VS_CC exprCreate(const VSMap *in, VSMap *out, void *userData, VSCore
 void VS_CC exprInitialize(VSConfigPlugin configFunc, VSRegisterFunction registerFunc, VSPlugin *plugin) {
     //configFunc("com.vapoursynth.expr", "expr", "VapourSynth Expr Filter", VAPOURSYNTH_API_VERSION, 1, plugin);
     registerFunc("Expr", "clips:clip[];expr:data[];format:int:opt;", exprCreate, nullptr, plugin);
+    registerFunc("Version", "", versionCreate, nullptr, plugin);
 }

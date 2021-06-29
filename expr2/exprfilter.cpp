@@ -33,6 +33,7 @@
 #include <vector>
 #include "VapourSynth.h"
 #include "VSHelper.h"
+#include "version.h"
 
 #include "Module.hpp"
 
@@ -65,6 +66,14 @@ enum class ExprOpType {
 
     // Stack helpers.
     DUP, SWAP,
+};
+
+std::vector<std::string> features = {
+    "x.property",
+    "sin", "cos",
+    "%",
+    "N", "X", "Y", "pi",
+    "trunc", "round", "floor",
 };
 
 enum class ComparisonType {
@@ -1067,6 +1076,14 @@ static void initExpr() {
     rr::Nucleus::adjustDefaultConfig(cfg);
 }
 
+void VS_CC versionCreate(const VSMap *in, VSMap *out, void *user_data, VSCore *core, const VSAPI *vsapi)
+{
+    vsapi->propSetData(out, "version", VERSION, -1, paAppend);
+    vsapi->propSetData(out, "expr_backend", "llvm", -1, paAppend);
+    for (const auto &f : features)
+        vsapi->propSetData(out, "expr_features", f.c_str(), -1, paAppend);
+}
+
 } // namespace
 
 
@@ -1076,5 +1093,6 @@ static void initExpr() {
 void VS_CC exprInitialize(VSConfigPlugin configFunc, VSRegisterFunction registerFunc, VSPlugin *plugin) {
     //configFunc("com.vapoursynth.expr", "expr", "VapourSynth Expr Filter", VAPOURSYNTH_API_VERSION, 1, plugin);
     registerFunc("Expr", "clips:clip[];expr:data[];format:int:opt;opt:int:opt;", exprCreate, nullptr, plugin);
+    registerFunc("Version", "", versionCreate, nullptr, plugin);
     initExpr();
 }
