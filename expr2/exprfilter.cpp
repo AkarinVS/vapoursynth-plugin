@@ -818,7 +818,7 @@ Compiled Compiler<lanes>::compile()
         auto key = std::make_pair(id, op.name);
         auto it = paMap.find(key);
         if (it == paMap.end())
-            paMap.insert({key, paMap.size()});
+            paMap.insert({key, (int)paMap.size()});
         op.imm.i = last + paMap.at(key);
     }
     std::vector<Compiled::PropAccess> pa(paMap.size());
