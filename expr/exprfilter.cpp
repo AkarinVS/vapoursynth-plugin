@@ -1008,7 +1008,7 @@ do { \
     void log_(XmmReg x, XmmReg zero, XmmReg one, Reg constants)
     {
         XmmReg emm0, invalid_mask, mask, y, etmp, z;
-        VEX2IMM(cmpps, invalid_mask, zero, x, _CMP_NLE_US);
+        VEX2IMM(cmpps, invalid_mask, zero, x, _CMP_NLT_US);
         VEX2(maxps, x, x, xmmword_ptr[constants + ConstantIndex::min_norm_pos * 16]);
         VEX1IMM(psrld, emm0, x, 23);
         VEX2(andps, x, x, xmmword_ptr[constants + ConstantIndex::inv_mant_mask * 16]);
@@ -1874,7 +1874,7 @@ do { \
     void log_(YmmReg x, YmmReg zero, YmmReg one, Reg constants, YmmReg regXs, Reg fconsts)
     {
         YmmReg emm0, invalid_mask, mask, y, etmp, z;
-        vcmpps(invalid_mask, zero, x, _CMP_NLE_US);
+        vcmpps(invalid_mask, zero, x, _CMP_NLT_US);
         vmaxps(x, x, ymmword_ptr[constants + ConstantIndex::min_norm_pos * 32]);
         vpsrld(emm0, x, 23);
         vandps(x, x, ymmword_ptr[constants + ConstantIndex::inv_mant_mask * 32]);
@@ -1942,8 +1942,6 @@ do { \
             auto t3 = bytecodeRegs[insn.dst];
 
             YmmReg r1, one;
-            Reg a;
-            mov(a, 2);
             vmovaps(one, ymmword_ptr[constants + ConstantIndex::float_one * 32]);
             vmovaps(r1, t1);
             log_(r1, zero, one, constants, regXs, fconsts);
@@ -2499,6 +2497,8 @@ ExpressionTree parseExpr(const std::string &expr, const VSVideoInfo * const *vi,
 
         // assign fconsts index
         if (op.type == ExprOpType::MEM_LOAD_CONST && op.imm.u == CONST_FIRST_PROP) {
+            if (token.prop.clip >= numInputs)
+                throw std::runtime_error("reference to undefined clip: " + tok);
             op.imm.u = tree.addPropAccess(token.prop);
         }
 
@@ -3870,7 +3870,7 @@ static void VS_CC exprCreate(const VSMap *in, VSMap *out, void *userData, VSCore
             expr[i] = expr[nexpr - 1];
         }
 
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < d->vi.format->numPlanes; i++) {
             if (!expr[i].empty()) {
                 d->plane[i] = poProcess;
             } else {
@@ -3889,15 +3889,11 @@ static void VS_CC exprCreate(const VSMap *in, VSMap *out, void *userData, VSCore
 
             int cpulevel = vs_get_cpulevel(core);
             if (cpulevel > VS_CPU_LEVEL_NONE) {
-                for (int i = 0; i < d->vi.format->numPlanes; i++) {
-                    if (d->plane[i] == poProcess) {
 #ifdef VS_TARGET_CPU_X86
-                        std::unique_ptr<ExprCompiler> compiler = make_compiler(d->numInputs, cpulevel);
-                        compiler->addInstructions(d->bytecode[i]);
-                        std::tie(d->proc[i], d->procSize[i]) = compiler->getCode();
+                std::unique_ptr<ExprCompiler> compiler = make_compiler(d->numInputs, cpulevel);
+                compiler->addInstructions(d->bytecode[i]);
+                std::tie(d->proc[i], d->procSize[i]) = compiler->getCode();
 #endif
-                    }
-                }
             }
         }
 #ifdef VS_TARGET_OS_WINDOWS
