@@ -2497,6 +2497,8 @@ ExpressionTree parseExpr(const std::string &expr, const VSVideoInfo * const *vi,
 
         // assign fconsts index
         if (op.type == ExprOpType::MEM_LOAD_CONST && op.imm.u == CONST_FIRST_PROP) {
+            if (token.prop.clip >= numInputs)
+                throw std::runtime_error("reference to undefined clip: " + tok);
             op.imm.u = tree.addPropAccess(token.prop);
         }
 
