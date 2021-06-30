@@ -4,7 +4,7 @@ Plugin akarin
 Expr
 ----
 
-`akarin.Expr(clip[] clips, string[] expr[, int format, int opt=0])`
+`akarin.Expr(clip[] clips, string[] expr[, int format, int opt=1])`
 
 This works just like [`std.Expr`](http://www.vapoursynth.com/doc/functions/expr.html) (esp. with the same SIMD JIT support on x86 hosts), with the following additions:
 - use `x.PlaneStatsAverage` to load the `PlaneStatsAverage` frame property of the current frame in the given clip `x`.
@@ -20,6 +20,8 @@ This works just like [`std.Expr`](http://www.vapoursynth.com/doc/functions/expr.
 - (\*) Arbitrarily named temporary variables (modeled after [Forth](https://en.wikipedia.org/wiki/Forth_(programming_language)))
   - Pop a value and store to variable `var`: `var!`
   - Read a variable `var` and push onto stack: `var@`
+- (\*) Static relative pixel access (modeled after [AVS+ Expr](http://avisynth.nl/index.php/Expr#Pixel_addressing))
+  - Use `x[relX,relY]` to access the pixel (relX, relY) relative to current coordinate, where -width < relX < width and -height < relY < height. Off screen pixels will be cloned from the respective edge. Both relX and relY should be constant.
 
 `akarin.Version()`
 
@@ -37,4 +39,4 @@ If you encounter issues and suspect it's related to this JIT, you could set the 
 When reporting issues, please also try limiting the ISA to a lower level (at least try setting `CPU_LEVEL` to 0 to force using the interpreter) and see the problem still persists.
 
 2. The new LLVM based implementation (lexpr). Features labeled with (\*) is only available in this new implementation.
-If the `opt` argument is set to 1, then it will activate an integer optimization mode, where intermediate values are computed with 32-bit integer for as long as possible. You have to make sure the intermediate value is always representable with int32 to use this optimization (as arithmetics will warp around in this mode.)
+If the `opt` argument is set to 1 (default), then it will activate an integer optimization mode, where intermediate values are computed with 32-bit integer for as long as possible. You have to make sure the intermediate value is always representable with int32 to use this optimization (as arithmetics will warp around in this mode.)

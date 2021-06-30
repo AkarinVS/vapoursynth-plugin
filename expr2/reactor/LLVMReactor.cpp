@@ -1688,6 +1688,7 @@ Value *Nucleus::createSelect(Value *c, Value *ifTrue, Value *ifFalse)
 SwitchCases *Nucleus::createSwitch(Value *control, BasicBlock *defaultBranch, unsigned numCases)
 {
 	RR_DEBUG_INFO_UPDATE_LOC();
+	Variable::materializeAll();
 	return reinterpret_cast<SwitchCases *>(jit->builder->CreateSwitch(V(control), B(defaultBranch), numCases));
 }
 

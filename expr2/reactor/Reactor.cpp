@@ -252,6 +252,36 @@ static Value *createSwizzle4(Value *val, uint16_t select)
 	return Nucleus::createShuffleVector(val, val, swizzle);
 }
 
+// NOTE: Only 24 bits out of 32 of the |select| value are used.
+// More specifically, the value should look like:
+//
+//    msb                                  lsb
+//     v                                    v
+//    [.aaa|.bbb|.ccc|.ddd.xxx|.yyy|.zzz|.www]    where '.' means an ignored bit
+//
+// This format makes it easy to write calls with hexadecimal select values,
+// since each hex digit is a separate swizzle index.
+//
+// For example:
+//      createSwizzle8( [a,b,c,d,e,f,g,h], 0x01234567 ) -> [a,b,c,d,e,f,g,h]
+//      createSwizzle8( [a,b,c,d,e,f,g,h], 0x00335566 ) -> [a,a,d,d,f,f,g,g]
+//
+static Value *createSwizzle8(Value *val, uint32_t select)
+{
+	int swizzle[8] = {
+		static_cast<int>((select >> 28) & 0x07),
+		static_cast<int>((select >> 24) & 0x07),
+		static_cast<int>((select >> 20) & 0x07),
+		static_cast<int>((select >> 16) & 0x07),
+		static_cast<int>((select >> 12) & 0x07),
+		static_cast<int>((select >> 8) & 0x07),
+		static_cast<int>((select >> 4) & 0x07),
+		static_cast<int>((select >> 0) & 0x07),
+	};
+
+	return Nucleus::createShuffleVector(val, val, swizzle);
+}
+
 static Value *createMask4(Value *lhs, Value *rhs, uint16_t select)
 {
 	bool mask[4] = { false, false, false, false };
@@ -2299,18 +2329,7 @@ RValue<UShort8> operator~(RValue<UShort8> val)
 
 RValue<UShort8> Swizzle(RValue<UShort8> x, uint32_t select)
 {
-	int swizzle[16] = {
-		static_cast<int>((select >> 28) & 0x07),
-		static_cast<int>((select >> 24) & 0x07),
-		static_cast<int>((select >> 20) & 0x07),
-		static_cast<int>((select >> 16) & 0x07),
-		static_cast<int>((select >> 12) & 0x07),
-		static_cast<int>((select >> 8) & 0x07),
-		static_cast<int>((select >> 4) & 0x07),
-		static_cast<int>((select >> 0) & 0x07),
-	};
-
-	return RValue<UShort8>(Nucleus::createShuffleVector(x.value(), x.value(), swizzle));
+	return RValue<UShort8>(createSwizzle8(x.value(), select));
 }
 
 Int::Int(Argument<Int> argument)
@@ -3951,6 +3970,11 @@ RValue<Int> Extract(RValue<Int8> x, int i)
 	return RValue<Int>(Nucleus::createExtractElement(x.value(), Int::type(), i));
 }
 
+RValue<Int8> Swizzle(RValue<Int8> x, uint32_t select)
+{
+	return RValue<Int8>(createSwizzle8(x.value(), select));
+}
+
 
 UInt8::UInt8()
 {
@@ -4867,6 +4891,11 @@ RValue<Float8> Insert(RValue<Float8> x, RValue<Float> element, int i)
 RValue<Float> Extract(RValue<Float8> x, int i)
 {
 	return RValue<Float>(Nucleus::createExtractElement(x.value(), Float::type(), i));
+}
+
+RValue<Float8> Swizzle(RValue<Float8> x, uint32_t select)
+{
+	return RValue<Float8>(createSwizzle8(x.value(), select));
 }
 
 
