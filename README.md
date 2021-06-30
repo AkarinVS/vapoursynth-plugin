@@ -30,7 +30,14 @@ Use this function to query the version and features of the plugin. It will retur
 - `expr_backend`: `llvm` (for lexpr) or `jitasm` (legacy).
 - `expr_features`: a list of byte strings for all supported features. e.g. here is the list for lexpr:
 ```python
-[b'x.property', b'sin', b'cos', b'%', b'N', b'X', b'Y', b'pi', b'width', b'height', b'trunc', b'round', b'floor', b'@', b'!']
+[
+ b'x.property',  # frame property access
+ b'sin', b'cos', b'%', # operators
+ b'N', b'X', b'Y', b'pi', b'width', b'height', # constants
+ b'trunc', b'round', b'floor',  # truncation, round and floor
+ b'@', b'!', # temporary variable access
+ b'x[x,y]'   # relative pixel access
+]
 ```
 
 There are two implementations:
