@@ -20,6 +20,8 @@ This works just like [`std.Expr`](http://www.vapoursynth.com/doc/functions/expr.
 - (\*) Arbitrarily named temporary variables (modeled after [Forth](https://en.wikipedia.org/wiki/Forth_(programming_language)))
   - Pop a value and store to variable `var`: `var!`
   - Read a variable `var` and push onto stack: `var@`
+- (\*) Static relative pixel access (modeled after [AVS+ Expr](http://avisynth.nl/index.php/Expr#Pixel_addressing))
+  - Use `x[relX,relY]` to access the pixel (relX, relY) relative to current coordinate, where -width < relX < width and -height < relY < height. Off screen pixels will be cloned from the respective edge. Both relX and relY should be constant.
 
 `akarin.Version()`
 
