@@ -24,6 +24,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <regex>
 #include <set>
 #include <string>
 #include <sstream>
@@ -36,6 +37,7 @@
 #include "version.h"
 
 #include "Module.hpp"
+#include "Debug.hpp"
 
 namespace {
 
@@ -76,6 +78,7 @@ std::vector<std::string> features = {
     "N", "X", "Y", "pi", "width", "height",
     "trunc", "round", "floor",
     "@", "!",
+    "x[x,y]",
 };
 
 enum class ComparisonType {
@@ -117,11 +120,16 @@ struct ExprOp {
     ExprOpType type;
     ExprUnion imm;
     std::string name;
+    int x, y;
 
-    ExprOp(ExprOpType type, ExprUnion param = {}, std::string name = {}) : type(type), imm(param), name(name) {}
+    ExprOp(ExprOpType type, ExprUnion param = {}, std::string name = {}, int x = 0, int y = 0)
+        : type(type), imm(param), name(name), x(x), y(y) {}
 };
 
-bool operator==(const ExprOp &lhs, const ExprOp &rhs) { return lhs.type == rhs.type && lhs.imm.u == rhs.imm.u && lhs.name == rhs.name; }
+bool operator==(const ExprOp &lhs, const ExprOp &rhs) {
+    return lhs.type == rhs.type && lhs.imm.u == rhs.imm.u && lhs.name == rhs.name &&
+        lhs.x == rhs.x && lhs.y == rhs.y;
+}
 bool operator!=(const ExprOp &lhs, const ExprOp &rhs) { return !(lhs == rhs); }
 
 enum PlaneOp {
@@ -210,6 +218,8 @@ ExprOp decodeToken(const std::string &token)
         { "width",{ ExprOpType::CONST_LOAD, static_cast<int>(LoadConstType::Width) } },
         {"height",{ ExprOpType::CONST_LOAD, static_cast<int>(LoadConstType::Height) } },
     };
+    static const std::regex relpixelRe { "^([a-z])\\[(-?[0-9]+),(-?[0-9]+)\\]$" };
+    std::smatch match;
 
     auto it = simple.find(token);
     if (it != simple.end()) {
@@ -236,6 +246,10 @@ ExprOp decodeToken(const std::string &token)
     } else if (token.size() >= 3 && token[0] >= 'a' && token[0] <= 'z' && token[1] == '.') {
         // frame property access
         return{ ExprOpType::CONST_LOAD, static_cast<int>(LoadConstType::LAST) + (token[0] >= 'x' ? token[0] - 'x' : token[0] - 'a' + 3), token.substr(2) };
+    } else if (std::regex_match(token, match, relpixelRe)) {
+        ASSERT(match.size() == 4);
+        auto clip = match[1].str(), sx = match[2].str(), sy = match[3].str();
+        return{ ExprOpType::MEM_LOAD, clip[0] >= 'x' ? clip[0] - 'x' : clip[0] - 'a' + 3, "", atoi(sx.c_str()), atoi(sy.c_str()) };
     } else {
         float f;
         std::string s;
@@ -263,6 +277,7 @@ struct VectorTypes<4> {
     typedef rr::UShort4 UShort;
     typedef rr::Int4 Int;
     typedef rr::Float4 Float;
+    typedef uint16_t SwizzleMask;
 };
 
 template<>
@@ -272,6 +287,7 @@ public:
     typedef rr::UShort8 UShort;
     typedef rr::Int8 Int;
     typedef rr::Float8 Float;
+    typedef uint32_t SwizzleMask;
 };
 
 template<int lanes>
@@ -506,6 +522,62 @@ rr::RValue<typename Compiler<lanes>::FloatV> Compiler<lanes>::SinCos_(rr::RValue
     return As<FloatV>(sign ^ As<IntV>(t1));
 }
 
+template<int lanes, typename VType>
+static VType relativeAccessAdjust(rr::Int &x, rr::Int &alignedx, rr::Int &width, const ExprOp &op, VType v)
+{
+    using namespace rr;
+    if (op.x == 0)
+        return v;
+    else {
+        BasicBlock *contBb = Nucleus::createBasicBlock();
+        if (op.x < 0) {
+            int absx = std::abs(op.x);
+            SwitchCases *switchCases = Nucleus::createSwitch(alignedx.loadValue(), contBb, (absx + lanes - 1) / lanes);
+            for (int i = 0; i < absx; i += lanes) {
+                BasicBlock *bb = Nucleus::createBasicBlock();
+                Nucleus::addSwitchCase(switchCases, i, bb);
+                Nucleus::setInsertBlock(bb);
+                typename VectorTypes<lanes>::SwizzleMask select = 0;
+                for (int j = 0; j < lanes; j++) {
+                    select <<= 4;
+                    select |= std::max(i + j + op.x, 0) % lanes;
+                }
+                v = Swizzle(v, select);
+                Nucleus::createBr(contBb);
+            }
+        } else {
+            Int dist = x + lanes - width;
+            BasicBlock *switchBb = Nucleus::createBasicBlock();
+            rr::Bool cond = dist > 0;
+            Nucleus::createCondBr(cond.loadValue(), switchBb, contBb);
+            Nucleus::setInsertBlock(switchBb);
+            BasicBlock *defaultBb = Nucleus::createBasicBlock();
+            SwitchCases *switchCases = Nucleus::createSwitch(dist.loadValue(), defaultBb, lanes-2);
+            for (int i = 1; i < lanes-1; i++) {
+                BasicBlock *bb = Nucleus::createBasicBlock();
+                Nucleus::addSwitchCase(switchCases, i, bb);
+                Nucleus::setInsertBlock(bb);
+                typename VectorTypes<lanes>::SwizzleMask select = 0, last = 0;
+                for (int j = 0; j < lanes; j++) {
+                    last = select & 0xf;
+                    select <<= 4;
+                    if (j + i < lanes)
+                        select |= j;
+                    else
+                        select |= last;
+                }
+                v = Swizzle(v, select);
+                Nucleus::createBr(contBb);
+            }
+            Nucleus::setInsertBlock(defaultBb);
+            v = Swizzle(v, 0);
+            Nucleus::createBr(contBb);
+        }
+        Nucleus::setInsertBlock(contBb);
+    }
+    return v;
+}
+
 template<int lanes>
 void Compiler<lanes>::buildOneIter(const Helper &helpers, State &state)
 {
@@ -570,24 +642,32 @@ void Compiler<lanes>::buildOneIter(const Helper &helpers, State &state)
         case ExprOpType::MEM_LOAD: {
             Pointer<Byte> p = state.wptrs[op.imm.i + 1];
             const VSFormat *format = ctx.vi[op.imm.i]->format;
-            p += state.y * state.strides[op.imm.i + 1] + state.x * format->bytesPerSample;
+            const bool unaligned = op.x != 0;
+            Int y = state.y, x = state.x;
+            if (op.y != 0)
+                y = Clamp(state.y + op.y, 0, state.height-1);
+            if (op.x != 0)
+                x = Clamp(state.x + op.x, 0, state.width-1);
+            p += y * state.strides[op.imm.i + 1] + x * format->bytesPerSample;
             if (format->sampleType == stInteger) {
-                IntV x;
+                IntV v;
                 if (format->bytesPerSample == 1)
-                    x = IntV(*Pointer<ByteV>(p, lanes*sizeof(uint8_t)));
+                    v = IntV(*Pointer<ByteV>(p, (unaligned ? 1:lanes)*sizeof(uint8_t)));
                 else if (format->bytesPerSample == 2)
-                    x = IntV(*Pointer<UShortV>(p, lanes*sizeof(uint16_t)));
+                    v = IntV(*Pointer<UShortV>(p, (unaligned ? 1:lanes)*sizeof(uint16_t)));
+                v = relativeAccessAdjust<lanes>(x, state.x, state.width, op, v);
                 if (ctx.forceFloat())
-                    OUT(FloatV(x));
+                    OUT(FloatV(v));
                 else
-                    OUT(x);
+                    OUT(v);
             } else if (format->sampleType == stFloat) {
-                FloatV x;
+                FloatV v;
                 if (format->bytesPerSample == 2)
                     abort(); // XXX: f16 not supported
                 else if (format->bytesPerSample == 4)
-                    x = *Pointer<FloatV>(p, lanes*sizeof(float));
-                OUT(x);
+                    v = *Pointer<FloatV>(p, (unaligned ? 1:lanes)*sizeof(float));
+                v = relativeAccessAdjust<lanes>(x, state.x, state.width, op, v);
+                OUT(v);
             }
             break;
         }
