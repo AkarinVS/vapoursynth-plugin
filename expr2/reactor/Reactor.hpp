@@ -2227,7 +2227,7 @@ RValue<Int8> Min(RValue<Int8> x, RValue<Int8> y);
 RValue<Int8> RoundInt(RValue<Float8> cast);
 RValue<Int8> Abs(RValue<Int8> x);
 
-//RValue<Int8> Swizzle(RValue<Int8> x, uint32_t select);
+RValue<Int8> Swizzle(RValue<Int8> x, uint32_t select);
 //RValue<Int8> MulHigh(RValue<Int8> x, RValue<Int8> y);
 
 class UInt8 : public LValue<UInt8>
@@ -2711,22 +2711,22 @@ static inline RValue<Float8> FMA(RValue<Float8> a, RValue<Float8> b, RValue<Floa
 
 // Deprecated: use Rcp
 // TODO(b/147516027): Remove when GLES frontend is removed
-RValue<Float8> Rcp_pp(RValue<Float8> val, bool exactAtPow2 = false);
+//RValue<Float8> Rcp_pp(RValue<Float8> val, bool exactAtPow2 = false);
 // Deprecated: use RcpSqrt
 // TODO(b/147516027): Remove when GLES frontend is removed
-RValue<Float8> RcpSqrt_pp(RValue<Float8> val);
-RValue<Float8> Rcp(RValue<Float8> x, Precision p = Precision::Full, bool finite = false, bool exactAtPow2 = false);
-RValue<Float8> RcpSqrt(RValue<Float8> x, Precision p = Precision::Full);
+//RValue<Float8> RcpSqrt_pp(RValue<Float8> val);
+//RValue<Float8> Rcp(RValue<Float8> x, Precision p = Precision::Full, bool finite = false, bool exactAtPow2 = false);
+//RValue<Float8> RcpSqrt(RValue<Float8> x, Precision p = Precision::Full);
 RValue<Float8> Sqrt(RValue<Float8> x);
 RValue<Float8> Insert(RValue<Float8> val, RValue<Float> element, int i);
 RValue<Float> Extract(RValue<Float8> x, int i);
-RValue<Float8> Swizzle(RValue<Float8> x, uint16_t select);
-RValue<Float8> Shuffle(RValue<Float8> x, RValue<Float8> y, uint16_t select);
-RValue<Float8> ShuffleLowHigh(RValue<Float8> x, RValue<Float8> y, uint16_t imm);
-RValue<Float8> UnpackLow(RValue<Float8> x, RValue<Float8> y);
-RValue<Float8> UnpackHigh(RValue<Float8> x, RValue<Float8> y);
-RValue<Float8> Mask(Float8 &lhs, RValue<Float8> rhs, uint16_t select);
-RValue<Int> SignMask(RValue<Float8> x);
+RValue<Float8> Swizzle(RValue<Float8> x, uint32_t select);
+//RValue<Float8> Shuffle(RValue<Float8> x, RValue<Float8> y, uint64_t select);
+//RValue<Float8> ShuffleLowHigh(RValue<Float8> x, RValue<Float8> y, uint16_t imm);
+//RValue<Float8> UnpackLow(RValue<Float8> x, RValue<Float8> y);
+//RValue<Float8> UnpackHigh(RValue<Float8> x, RValue<Float8> y);
+//RValue<Float8> Mask(Float8 &lhs, RValue<Float8> rhs, uint16_t select);
+//RValue<Int> SignMask(RValue<Float8> x);
 
 // Ordered comparison functions
 RValue<Int8> CmpEQ(RValue<Float8> x, RValue<Float8> y);
