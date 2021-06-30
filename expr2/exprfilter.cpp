@@ -47,7 +47,8 @@ namespace {
 
 enum class ExprOpType {
     // Terminals.
-    MEM_LOAD, CONSTANT, LOAD_CONST,
+    MEM_LOAD, CONSTANT, CONST_LOAD,
+    VAR_LOAD, VAR_STORE,
 
     // Arithmetic primitives.
     ADD, SUB, MUL, DIV, MOD, SQRT, ABS, MAX, MIN, CMP,
@@ -72,8 +73,9 @@ std::vector<std::string> features = {
     "x.property",
     "sin", "cos",
     "%",
-    "N", "X", "Y", "pi",
+    "N", "X", "Y", "pi", "width", "height",
     "trunc", "round", "floor",
+    "@", "!",
 };
 
 enum class ComparisonType {
@@ -89,7 +91,9 @@ enum class LoadConstType {
     N = 0,
     X = 1,
     Y = 2,
-    LAST = 3,
+    Width = 3,
+    Height = 4,
+    LAST = 5,
 };
 
 enum class LoadConstIndex {
@@ -200,9 +204,11 @@ ExprOp decodeToken(const std::string &token)
         { "dup",  { ExprOpType::DUP, 0 } },
         { "swap", { ExprOpType::SWAP, 1 } },
         { "pi",   { ExprOpType::CONSTANT, static_cast<float>(M_PI) } },
-        { "N",    { ExprOpType::LOAD_CONST, static_cast<int>(LoadConstType::N) } },
-        { "X",    { ExprOpType::LOAD_CONST, static_cast<int>(LoadConstType::X) } },
-        { "Y",    { ExprOpType::LOAD_CONST, static_cast<int>(LoadConstType::Y) } },
+        { "N",    { ExprOpType::CONST_LOAD, static_cast<int>(LoadConstType::N) } },
+        { "X",    { ExprOpType::CONST_LOAD, static_cast<int>(LoadConstType::X) } },
+        { "Y",    { ExprOpType::CONST_LOAD, static_cast<int>(LoadConstType::Y) } },
+        { "width",{ ExprOpType::CONST_LOAD, static_cast<int>(LoadConstType::Width) } },
+        {"height",{ ExprOpType::CONST_LOAD, static_cast<int>(LoadConstType::Height) } },
     };
 
     auto it = simple.find(token);
@@ -224,9 +230,12 @@ ExprOp decodeToken(const std::string &token)
         if (idx < 0 || prefix + count != token.size())
             throw std::runtime_error("illegal token: " + token);
         return{ token[0] == 'd' ? ExprOpType::DUP : ExprOpType::SWAP, idx };
+    } else if (token.size() >= 2 && (token.back() == '@' || token.back() == '!')) {
+        // 'name@' load variable; 'name!' store to variable.
+        return{ token.back() == '@' ? ExprOpType::VAR_LOAD : ExprOpType::VAR_STORE, -1, token.substr(0, token.size()-1) };
     } else if (token.size() >= 3 && token[0] >= 'a' && token[0] <= 'z' && token[1] == '.') {
         // frame property access
-        return{ ExprOpType::LOAD_CONST, static_cast<int>(LoadConstType::LAST) + (token[0] >= 'x' ? token[0] - 'x' : token[0] - 'a' + 3), token.substr(2) };
+        return{ ExprOpType::CONST_LOAD, static_cast<int>(LoadConstType::LAST) + (token[0] >= 'x' ? token[0] - 'x' : token[0] - 'a' + 3), token.substr(2) };
     } else {
         float f;
         std::string s;
@@ -342,6 +351,8 @@ class Compiler {
 
         rr::Int y;
         rr::Int x;
+
+        std::vector<Value> variables;
     };
 
     Helper buildHelpers(rr::Module &mod);
@@ -501,7 +512,9 @@ void Compiler<lanes>::buildOneIter(const Helper &helpers, State &state)
     constexpr unsigned char numOperands[] = {
         0, // MEM_LOAD
         0, // CONSTANT
-        0, // LOAD_CONST
+        0, // CONST_LOAD
+        0, // VAR_LOAD
+        1, // VAR_STORE
         2, // ADD
         2, // SUB
         2, // MUL
@@ -584,18 +597,23 @@ void Compiler<lanes>::buildOneIter(const Helper &helpers, State &state)
             else
                 OUT(op.imm.f);
             break;
-        case ExprOpType::LOAD_CONST: {
-            switch (op.imm.i) {
-            case static_cast<int>(LoadConstType::N):
+        case ExprOpType::CONST_LOAD: {
+            switch (static_cast<LoadConstType>(op.imm.i)) {
+            case LoadConstType::N:
                 OUT(IntV(Pointer<Int>(state.consts)[static_cast<int>(LoadConstIndex::N)]));
                 break;
-            case static_cast<int>(LoadConstType::Y):
+            case LoadConstType::Y:
                 OUT(IntV(state.y));
                 break;
-            case static_cast<int>(LoadConstType::X): {
+            case LoadConstType::X:
                 OUT(state.xvec + IntV(state.x));
                 break;
-            }
+            case LoadConstType::Width:
+                OUT(IntV(state.width));
+                break;
+            case LoadConstType::Height:
+                OUT(IntV(state.height));
+                break;
             default: {
                 constexpr int bias = static_cast<int>(LoadConstIndex::LAST) - static_cast<int>(LoadConstType::LAST);
                 OUT(FloatV(state.consts[op.imm.i + bias]));
@@ -650,6 +668,15 @@ void Compiler<lanes>::buildOneIter(const Helper &helpers, State &state)
             auto x = op(li, ri); \
             OUT(x & IntV(1)); \
             break; \
+        }
+
+        case ExprOpType::VAR_LOAD:
+            OUT(state.variables[op.imm.i]);
+            break;
+        case ExprOpType::VAR_STORE: {
+            LOAD1(x);
+            state.variables[op.imm.i] = x;
+            break;
         }
 
         case ExprOpType::ADD: BINARYOP(operator +, false);
@@ -818,7 +845,7 @@ Compiled Compiler<lanes>::compile()
         ExprOp &op = ctx.ops[i];
 
         constexpr int last = static_cast<int>(LoadConstType::LAST);
-        if (op.type != ExprOpType::LOAD_CONST || op.imm.i < last) continue;
+        if (op.type != ExprOpType::CONST_LOAD || op.imm.i < last) continue;
 
         int id = op.imm.i - last;
         if (id >= ctx.numInputs)
@@ -835,6 +862,21 @@ Compiled Compiler<lanes>::compile()
         pa[item.second] = Compiled::PropAccess{ item.first.first, item.first.second };
     }
 
+    std::map<std::string, int> varMap;
+    for (size_t i = 0; i < ctx.ops.size(); i++) {
+        const std::string &tok = ctx.tokens[i];
+        ExprOp &op = ctx.ops[i];
+
+        if (op.type != ExprOpType::VAR_LOAD && op.type != ExprOpType::VAR_STORE) continue;
+        auto it = varMap.find(op.name);
+        if (it == varMap.end()) {
+            if (op.type == ExprOpType::VAR_LOAD)
+                throw std::runtime_error("reference to uninitialized variable: " + tok);
+            varMap.insert({ op.name, (int)varMap.size() });
+        }
+        op.imm.i = varMap.at(op.name);
+    }
+
     Helper helpers = buildHelpers(mod);
 
     //            void *rwptrs, int strides[], float *props, int width, int height
@@ -846,6 +888,9 @@ Compiled Compiler<lanes>::compile()
     state.consts = Pointer<Float>(Pointer<Byte>(function.Arg<2>()));
     state.width = function.Arg<3>();
     state.height = function.Arg<4>();
+
+    for (size_t i = 0; i < varMap.size(); i++)
+        state.variables.push_back(Value(IntV(0)));
 
     for (int i = 0; i < lanes; i++)
         state.xvec = Insert(state.xvec, i, i);
@@ -866,7 +911,7 @@ Compiled Compiler<lanes>::compile()
     }
     Return();
 
-    return Compiled{ std::move(mod.acquire("proc")), pa };
+    return Compiled{ mod.acquire("proc"), pa };
 }
 
 
