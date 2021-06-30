@@ -2623,6 +2623,8 @@ float evalConstantExpr(const ExpressionTreeNode &node)
     case ExprOpType::SUB: return LEFT - RIGHT;
     case ExprOpType::MUL: return LEFT * RIGHT;
     case ExprOpType::DIV: return LEFT / RIGHT;
+    case ExprOpType::MOD: return std::fmod(LEFT, RIGHT);
+    case ExprOpType::FMA: return std::fmod(LEFT, RIGHT);
         switch (static_cast<FMAType>(node.op.imm.u)) {
         case FMAType::FMADD: return RIGHTLEFT * RIGHTRIGHT + LEFT;
         case FMAType::FMSUB: return RIGHTLEFT * RIGHTRIGHT - LEFT;
@@ -2652,6 +2654,10 @@ float evalConstantExpr(const ExpressionTreeNode &node)
     case ExprOpType::EXP: return std::exp(LEFT);
     case ExprOpType::LOG: return std::log(LEFT);
     case ExprOpType::POW: return std::pow(LEFT, RIGHT);
+    case ExprOpType::SIN: return std::sin(LEFT);
+    case ExprOpType::COS: return std::cos(LEFT);
+    case ExprOpType::TRUNC: return std::trunc(LEFT);
+    case ExprOpType::ROUND: return std::round(LEFT);
     case ExprOpType::TERNARY: return float2bool(LEFT) ? RIGHTLEFT : RIGHTRIGHT;
     default: return NAN;
     }
