@@ -84,7 +84,7 @@ enum class ExprOpType {
 };
 
 std::vector<std::string> features = {
-    "sin", "cos", "N", "X", "Y", "%", "trunc", "round", "x.property"
+    "sin", "cos", "N", "X", "Y", "%", "trunc", "round", "x.property", "pi",
 };
 
 enum class FMAType {
@@ -2397,8 +2397,9 @@ Token decodeToken(const std::string &token)
         { "pow",  { ExprOpType::POW } },
         { "sin",  { ExprOpType::SIN } },
         { "cos",  { ExprOpType::COS } },
-        { "trunc",  { ExprOpType::TRUNC } },
-        { "round",  { ExprOpType::ROUND } },
+        { "trunc",{ ExprOpType::TRUNC } },
+        { "round",{ ExprOpType::ROUND } },
+        { "pi",   { ExprOpType::CONSTANT, static_cast<float>(M_PI) } },
         { "dup",  { ExprOpType::DUP, 0 } },
         { "swap", { ExprOpType::SWAP, 1 } },
     };
