@@ -30,7 +30,7 @@ jobs:
         run: |
             mkdir output
             cd output
-            cl.exe /c /Zi /nologo /W3 /WX- /diagnostics:column /sdl- /O2 /Oi /GL /D /D M_PI=3.141592653589793f VS_TARGET_OS_WINDOWS /D VS_TARGET_CPU_X86 /D _CRT_SECURE_NO_WARNINGS /D NDEBUG /D _WINDLL /D _UNICODE /D UNICODE /Gm- /EHsc /MT /GS- /Gy /fp:precise /permissive- /Zc:wchar_t /Zc:forScope /Zc:inline /Gd /TP /FC /errorReport:queue /I .. /I ..\include ..\plugin.cpp ..\expr\cpufeatures.cpp ..\expr\exprfilter.cpp ..\expr\vslog.cpp ..\expr\kernel\cpulevel.cpp
+            cl.exe /c /Zi /nologo /W3 /WX- /diagnostics:column /sdl- /O2 /Oi /GL /D M_PI=3.141592653589793f /D VS_TARGET_OS_WINDOWS /D VS_TARGET_CPU_X86 /D _CRT_SECURE_NO_WARNINGS /D NDEBUG /D _WINDLL /D _UNICODE /D UNICODE /Gm- /EHsc /MT /GS- /Gy /fp:precise /permissive- /Zc:wchar_t /Zc:forScope /Zc:inline /Gd /TP /FC /errorReport:queue /I .. /I ..\include ..\plugin.cpp ..\expr\cpufeatures.cpp ..\expr\exprfilter.cpp ..\expr\vslog.cpp ..\expr\kernel\cpulevel.cpp
             mkdir release
             link.exe /ERRORREPORT:QUEUE /OUT:"release\libakarin.dll" /NOLOGO /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /DEBUG /OPT:REF /OPT:ICF /TLBID:1 /DYNAMICBASE /NXCOMPAT /FORCE:MULTIPLE /DLL plugin.obj cpufeatures.obj exprfilter.obj vslog.obj cpulevel.obj
             cd ..
