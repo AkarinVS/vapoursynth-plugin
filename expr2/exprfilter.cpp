@@ -655,6 +655,8 @@ void Compiler<lanes>::buildOneIter(const Helper &helpers, State &state)
                     v = IntV(*Pointer<ByteV>(p, (unaligned ? 1:lanes)*sizeof(uint8_t)));
                 else if (format->bytesPerSample == 2)
                     v = IntV(*Pointer<UShortV>(p, (unaligned ? 1:lanes)*sizeof(uint16_t)));
+                else if (format->bytesPerSample == 4)
+                    v = IntV(*Pointer<IntV>(p, (unaligned ? 1:lanes)*sizeof(uint32_t)));
                 v = relativeAccessAdjust<lanes>(x, state.x, state.width, op, v);
                 if (ctx.forceFloat())
                     OUT(FloatV(v));
@@ -858,12 +860,16 @@ void Compiler<lanes>::buildOneIter(const Helper &helpers, State &state)
         if (res.isFloat()) {
             FloatV clamped = Min(Max(res.f(), FloatV(0)), FloatV(maxval));
             rounded = RoundInt(clamped);
-        } else
+        } else if (format->bitsPerSample < 32)
             rounded = Min(Max(res.i(), IntV(0)), IntV(maxval));
+        else
+            rounded = res.i();
         if (format->bytesPerSample == 1)
             *Pointer<ByteV>(p, lanes*sizeof(uint8_t)) = ByteV(UShortV(rounded));
         else if (format->bytesPerSample == 2)
             *Pointer<UShortV>(p, lanes*sizeof(uint16_t)) = UShortV(rounded);
+        else if (format->bytesPerSample == 4)
+            *Pointer<IntV>(p, lanes*sizeof(uint32_t)) = rounded;
     } else if (format->sampleType == stFloat) {
         if (format->bytesPerSample == 2) // XXX: f16 not supported.
             abort();
@@ -1114,14 +1120,15 @@ static void VS_CC exprCreate(const VSMap *in, VSMap *out, void *userData, VSCore
                 throw std::runtime_error("All inputs must have the same number of planes and the same dimensions, subsampling included");
             }
 
+            int bits = vi[i]->format->bitsPerSample;
             if (EXPR_F16C_TEST) {
-                if ((vi[i]->format->bitsPerSample > 16 && vi[i]->format->sampleType == stInteger)
-                    || (vi[i]->format->bitsPerSample != 16 && vi[i]->format->bitsPerSample != 32 && vi[i]->format->sampleType == stFloat))
-                    throw std::runtime_error("Input clips must be 8-16 bit integer or 16/32 bit float format");
+                if (((bits > 32 || (bits > 16 && bits < 32)) && vi[i]->format->sampleType == stInteger)
+                    || (bits != 16 && bits != 32 && vi[i]->format->sampleType == stFloat))
+                    throw std::runtime_error("Input clips must be 8-16/32 bit integer or 16/32 bit float format");
             } else {
-                if ((vi[i]->format->bitsPerSample > 16 && vi[i]->format->sampleType == stInteger)
-                    || (vi[i]->format->bitsPerSample != 32 && vi[i]->format->sampleType == stFloat))
-                    throw std::runtime_error("Input clips must be 8-16 bit integer or 32 bit float format");
+                if (((bits > 32 || (bits > 16 && bits < 32)) && vi[i]->format->sampleType == stInteger)
+                    || (bits != 32 && vi[i]->format->sampleType == stFloat))
+                    throw std::runtime_error("Input clips must be 8-16/32 bit integer or 32 bit float format");
             }
         }
 
