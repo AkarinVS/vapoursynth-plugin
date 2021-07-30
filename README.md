@@ -22,6 +22,9 @@ This works just like [`std.Expr`](http://www.vapoursynth.com/doc/functions/expr.
   - Read a variable `var` and push onto stack: `var@`
 - (\*) Static relative pixel access (modeled after [AVS+ Expr](http://avisynth.nl/index.php/Expr#Pixel_addressing))
   - Use `x[relX,relY]` to access the pixel (relX, relY) relative to current coordinate, where -width < relX < width and -height < relY < height. Off screen pixels will be cloned from the respective edge. Both relX and relY should be constant.
+- Support more bases for constants
+  - hexadecimals: 0x123 or 0x123.4p5
+  - octals: 023 (however, invalid octal numbers will be parsed as floating points, so "09" will be parsed the same as "9.0")
 
 `akarin.Version()`
 

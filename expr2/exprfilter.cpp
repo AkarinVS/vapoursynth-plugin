@@ -49,7 +49,7 @@ namespace {
 
 enum class ExprOpType {
     // Terminals.
-    MEM_LOAD, CONSTANT, CONST_LOAD,
+    MEM_LOAD, CONSTANTI, CONSTANTF, CONST_LOAD,
     VAR_LOAD, VAR_STORE,
 
     // Arithmetic primitives.
@@ -211,7 +211,7 @@ ExprOp decodeToken(const std::string &token)
         { "cos",  { ExprOpType::COS } },
         { "dup",  { ExprOpType::DUP, 0 } },
         { "swap", { ExprOpType::SWAP, 1 } },
-        { "pi",   { ExprOpType::CONSTANT, static_cast<float>(M_PI) } },
+        { "pi",   { ExprOpType::CONSTANTF, static_cast<float>(M_PI) } },
         { "N",    { ExprOpType::CONST_LOAD, static_cast<int>(LoadConstType::N) } },
         { "X",    { ExprOpType::CONST_LOAD, static_cast<int>(LoadConstType::X) } },
         { "Y",    { ExprOpType::CONST_LOAD, static_cast<int>(LoadConstType::Y) } },
@@ -251,15 +251,31 @@ ExprOp decodeToken(const std::string &token)
         auto clip = match[1].str(), sx = match[2].str(), sy = match[3].str();
         return{ ExprOpType::MEM_LOAD, clip[0] >= 'x' ? clip[0] - 'x' : clip[0] - 'a' + 3, "", atoi(sx.c_str()), atoi(sy.c_str()) };
     } else {
-        float f;
-        std::string s;
-        std::istringstream numStream(token);
-        numStream.imbue(std::locale::classic());
-        if (!(numStream >> f))
-            throw std::runtime_error("failed to convert '" + token + "' to float");
-        if (numStream >> s)
+        size_t pos = 0;
+        long long l = 0;
+        float f = 0;
+        const size_t len = token.size();
+        try {
+            l = std::stoll(token, &pos, 0);
+        } catch (...) {
+            pos = 0;
+        }
+        if (pos == len) {
+            if ((int32_t)l == l) return { ExprOpType::CONSTANTI, (int32_t)l };
+            else if ((uint32_t)l == l) return { ExprOpType::CONSTANTI, (uint32_t)l };
+            return { ExprOpType::CONSTANTF, (float)l };
+        }
+        try {
+            f = std::stof(token, &pos);
+        } catch (...) {
+            pos = 0;
+        }
+        if (pos == len)
+            return { ExprOpType::CONSTANTF, f };
+        else if (pos > 0)
             throw std::runtime_error("failed to convert '" + token + "' to float, not the whole token could be converted");
-        return{ ExprOpType::CONSTANT, f };
+        else
+            throw std::runtime_error("failed to convert '" + token + "' to float");
     }
 }
 
@@ -583,7 +599,8 @@ void Compiler<lanes>::buildOneIter(const Helper &helpers, State &state)
 {
     constexpr unsigned char numOperands[] = {
         0, // MEM_LOAD
-        0, // CONSTANT
+        0, // CONSTANTI
+        0, // CONSTANTF
         0, // CONST_LOAD
         0, // VAR_LOAD
         1, // VAR_STORE
@@ -673,7 +690,10 @@ void Compiler<lanes>::buildOneIter(const Helper &helpers, State &state)
             }
             break;
         }
-        case ExprOpType::CONSTANT:
+        case ExprOpType::CONSTANTI:
+            OUT((int)op.imm.i);
+            break;
+        case ExprOpType::CONSTANTF:
             if (op.imm.f == (float)(int)op.imm.f)
                 OUT((int)op.imm.f);
             else
