@@ -1198,14 +1198,27 @@ static llvm::Value *createGather(llvm::Value *base, llvm::Type *elTy, llvm::Valu
 	}
 }
 
-RValue<Float4> Gather(RValue<Pointer<Float>> base, RValue<Int4> offsets, RValue<Int4> mask, unsigned int alignment, bool zeroMaskedLanes /* = false */)
+RValue<Float8> Gather(RValue<Pointer<Float>> base, RValue<Int8> offsets, RValue<Int8> mask, unsigned int alignment, bool zeroMaskedLanes /* = false */)
 {
-	return As<Float4>(V(createGather(V(base.value()), T(Float::type()), V(offsets.value()), V(mask.value()), alignment, zeroMaskedLanes)));
+	return As<Float8>(V(createGather(V(base.value()), T(Float::type()), V(offsets.value()), V(mask.value()), alignment, zeroMaskedLanes)));
 }
 
-RValue<Int4> Gather(RValue<Pointer<Int>> base, RValue<Int4> offsets, RValue<Int4> mask, unsigned int alignment, bool zeroMaskedLanes /* = false */)
+RValue<Byte8> Gather(RValue<Pointer<Byte>> base, RValue<Int8> offsets, RValue<Int8> mask, unsigned int alignment, bool zeroMaskedLanes /* = false */)
 {
-	return As<Int4>(V(createGather(V(base.value()), T(Int::type()), V(offsets.value()), V(mask.value()), alignment, zeroMaskedLanes)));
+	llvm::Value *x = createGather(V(base.value()), T(Byte::type()), V(offsets.value()), V(mask.value()), alignment, zeroMaskedLanes);
+	llvm::Value *zero = llvm::Constant::getNullValue(x->getType());
+	const llvm::SmallVector<CreateShuffleVectorIndexType, 16> vec = {0,1,2,3,4,5,6,7,8,8,8,8,8,8,8,8};
+	return As<Byte8>(V(jit->builder->CreateShuffleVector(x, zero, vec)));
+}
+
+RValue<UShort8> Gather(RValue<Pointer<UShort>> base, RValue<Int8> offsets, RValue<Int8> mask, unsigned int alignment, bool zeroMaskedLanes /* = false */)
+{
+	return As<UShort8>(V(createGather(V(base.value()), T(UShort::type()), V(offsets.value()), V(mask.value()), alignment, zeroMaskedLanes)));
+}
+
+RValue<Int8> Gather(RValue<Pointer<Int>> base, RValue<Int8> offsets, RValue<Int8> mask, unsigned int alignment, bool zeroMaskedLanes /* = false */)
+{
+	return As<Int8>(V(createGather(V(base.value()), T(Int::type()), V(offsets.value()), V(mask.value()), alignment, zeroMaskedLanes)));
 }
 
 static void createScatter(llvm::Value *base, llvm::Value *val, llvm::Value *offsets, llvm::Value *mask, unsigned int alignment)

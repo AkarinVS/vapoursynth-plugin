@@ -2899,7 +2899,13 @@ void MaskedStore(RValue<Pointer<Float4>> base, RValue<Float4> val, RValue<Int4> 
 void MaskedStore(RValue<Pointer<Int4>> base, RValue<Int4> val, RValue<Int4> mask, unsigned int alignment);
 
 RValue<Float4> Gather(RValue<Pointer<Float>> base, RValue<Int4> offsets, RValue<Int4> mask, unsigned int alignment, bool zeroMaskedLanes = false);
+RValue<Float8> Gather(RValue<Pointer<Float>> base, RValue<Int8> offsets, RValue<Int8> mask, unsigned int alignment, bool zeroMaskedLanes = false);
+RValue<Byte4> Gather(RValue<Pointer<Byte>> base, RValue<Int4> offsets, RValue<Int4> mask, unsigned int alignment, bool zeroMaskedLanes = false);
+RValue<Byte8> Gather(RValue<Pointer<Byte>> base, RValue<Int8> offsets, RValue<Int8> mask, unsigned int alignment, bool zeroMaskedLanes = false);
+RValue<UShort4> Gather(RValue<Pointer<UShort>> base, RValue<Int4> offsets, RValue<Int4> mask, unsigned int alignment, bool zeroMaskedLanes = false);
+RValue<UShort8> Gather(RValue<Pointer<UShort>> base, RValue<Int8> offsets, RValue<Int8> mask, unsigned int alignment, bool zeroMaskedLanes = false);
 RValue<Int4> Gather(RValue<Pointer<Int>> base, RValue<Int4> offsets, RValue<Int4> mask, unsigned int alignment, bool zeroMaskedLanes = false);
+RValue<Int8> Gather(RValue<Pointer<Int>> base, RValue<Int8> offsets, RValue<Int8> mask, unsigned int alignment, bool zeroMaskedLanes = false);
 void Scatter(RValue<Pointer<Float>> base, RValue<Float4> val, RValue<Int4> offsets, RValue<Int4> mask, unsigned int alignment);
 void Scatter(RValue<Pointer<Int>> base, RValue<Int4> val, RValue<Int4> offsets, RValue<Int4> mask, unsigned int alignment);
 

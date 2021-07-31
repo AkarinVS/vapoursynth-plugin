@@ -78,7 +78,7 @@ std::vector<std::string> features = {
     "N", "X", "Y", "pi", "width", "height",
     "trunc", "round", "floor",
     "@", "!",
-    "x[x,y]",
+    "x[x,y]", "x[x,y]:m",
 };
 
 enum class ComparisonType {
@@ -104,6 +104,12 @@ enum class LoadConstIndex {
     LAST = 1,
 };
 
+enum class BoundaryCondition {
+    Unspecified = 0,
+    Clamped,
+    Mirrored,
+};
+
 union ExprUnion {
     int32_t i;
     uint32_t u;
@@ -121,9 +127,10 @@ struct ExprOp {
     ExprUnion imm;
     std::string name;
     int x, y;
+    BoundaryCondition bc;
 
-    ExprOp(ExprOpType type, ExprUnion param = {}, std::string name = {}, int x = 0, int y = 0)
-        : type(type), imm(param), name(name), x(x), y(y) {}
+    ExprOp(ExprOpType type, ExprUnion param = {}, std::string name = {}, int x = 0, int y = 0, BoundaryCondition bc = BoundaryCondition::Unspecified)
+        : type(type), imm(param), name(name), x(x), y(y), bc(bc) {}
 };
 
 bool operator==(const ExprOp &lhs, const ExprOp &rhs) {
@@ -218,7 +225,7 @@ ExprOp decodeToken(const std::string &token)
         { "width",{ ExprOpType::CONST_LOAD, static_cast<int>(LoadConstType::Width) } },
         {"height",{ ExprOpType::CONST_LOAD, static_cast<int>(LoadConstType::Height) } },
     };
-    static const std::regex relpixelRe { "^([a-z])\\[(-?[0-9]+),(-?[0-9]+)\\]$" };
+    static const std::regex relpixelRe { "^([a-z])\\[(-?[0-9]+),(-?[0-9]+)\\](:[cm])?$" };
     std::smatch match;
 
     auto it = simple.find(token);
@@ -247,9 +254,11 @@ ExprOp decodeToken(const std::string &token)
         // frame property access
         return{ ExprOpType::CONST_LOAD, static_cast<int>(LoadConstType::LAST) + (token[0] >= 'x' ? token[0] - 'x' : token[0] - 'a' + 3), token.substr(2) };
     } else if (std::regex_match(token, match, relpixelRe)) {
-        ASSERT(match.size() == 4);
-        auto clip = match[1].str(), sx = match[2].str(), sy = match[3].str();
-        return{ ExprOpType::MEM_LOAD, clip[0] >= 'x' ? clip[0] - 'x' : clip[0] - 'a' + 3, "", atoi(sx.c_str()), atoi(sy.c_str()) };
+        ASSERT(match.size() == 5);
+        auto clip = match[1].str(), sx = match[2].str(), sy = match[3].str(), flag = match[4].str();
+        BoundaryCondition bc = flag.size() == 0 ? BoundaryCondition::Unspecified :
+            (flag[1] == 'm' ? BoundaryCondition::Mirrored : BoundaryCondition::Clamped);
+        return{ ExprOpType::MEM_LOAD, clip[0] >= 'x' ? clip[0] - 'x' : clip[0] - 'a' + 3, "", atoi(sx.c_str()), atoi(sy.c_str()), bc };
     } else {
         size_t pos = 0;
         long long l = 0;
@@ -316,11 +325,16 @@ class Compiler {
         const VSVideoInfo * const *vi;
         int numInputs;
         int optMask;
-        Context(const std::string &expr, const VSVideoInfo *vo, const VSVideoInfo *const *vi, int numInputs, int opt):
-             expr(expr), vo(vo), vi(vi), numInputs(numInputs), optMask(opt) {
-             tokens = tokenize(expr);
-             for (const auto &tok: tokens)
-                 ops.push_back(decodeToken(tok));
+        bool mirror;
+        Context(const std::string &expr, const VSVideoInfo *vo, const VSVideoInfo *const *vi, int numInputs, int opt, int mirror):
+            expr(expr), vo(vo), vi(vi), numInputs(numInputs), optMask(opt), mirror(!!mirror) {
+            tokens = tokenize(expr);
+            for (const auto &tok: tokens) {
+                auto op = decodeToken(tok);
+                if (op.bc == BoundaryCondition::Unspecified)
+                    op.bc = mirror ? BoundaryCondition::Mirrored : BoundaryCondition::Clamped;
+                ops.push_back(op);
+            }
         }
         enum {
             flagUseInteger = 1<<0,
@@ -391,8 +405,8 @@ class Compiler {
     void buildOneIter(const Helper &helpers, State &state);
 
 public:
-    Compiler(const std::string &expr, const VSVideoInfo *vo, const VSVideoInfo * const *vi, int numInputs, int opt = 0) :
-        ctx(expr, vo, vi, numInputs, opt) {}
+    Compiler(const std::string &expr, const VSVideoInfo *vo, const VSVideoInfo * const *vi, int numInputs, int opt = 0, int mirror = 0) :
+        ctx(expr, vo, vi, numInputs, opt, mirror) {}
 
     Compiled compile();
 };
@@ -544,7 +558,9 @@ static VType relativeAccessAdjust(rr::Int &x, rr::Int &alignedx, rr::Int &width,
     using namespace rr;
     if (op.x == 0)
         return v;
-    else {
+    else if (op.bc == BoundaryCondition::Mirrored)
+        return v;
+    else if (op.bc == BoundaryCondition::Clamped) {
         BasicBlock *contBb = Nucleus::createBasicBlock();
         if (op.x < 0) {
             int absx = std::abs(op.x);
@@ -661,19 +677,51 @@ void Compiler<lanes>::buildOneIter(const Helper &helpers, State &state)
             const VSFormat *format = ctx.vi[op.imm.i]->format;
             const bool unaligned = op.x != 0;
             Int y = state.y, x = state.x;
-            if (op.y != 0)
-                y = Clamp(state.y + op.y, 0, state.height-1);
-            if (op.x != 0)
-                x = Clamp(state.x + op.x, 0, state.width-1);
+            IntV offsets = 0;
+            if (op.bc == BoundaryCondition::Clamped) {
+                if (op.y != 0)
+                    y = Clamp(state.y + op.y, 0, state.height-1);
+                if (op.x != 0)
+                    x = Clamp(state.x + op.x, 0, state.width-1);
+            } else { // Mirrored
+                if (op.y != 0) {
+                    Int sy = state.y + Clamp(op.y, -state.height, state.height);
+                    y = IfThenElse(sy < 0, -1 - sy,
+                            IfThenElse(sy >= state.height, 2*state.height-1 - sy, sy));
+                }
+                if (op.x != 0) {
+                    Int cx = Clamp(op.x, -state.width, state.width);
+                    Int w2m1 = 2 * state.width - 1;
+                    for (int i = 0; i < lanes; i++) {
+                        Int sx = x + i + cx;
+                        Int xi = IfThenElse(sx < 0, -1 - sx,
+                                    IfThenElse(sx >= state.width, w2m1 - sx, sx));
+                        offsets = Insert(offsets, xi, i);
+                    }
+                    offsets = offsets * IntV(format->bytesPerSample);
+                    x = 0;
+                }
+            }
             p += y * state.strides[op.imm.i + 1] + x * format->bytesPerSample;
+            const bool regularLoad = op.bc != BoundaryCondition::Mirrored || op.x == 0;
             if (format->sampleType == stInteger) {
                 IntV v;
-                if (format->bytesPerSample == 1)
-                    v = IntV(*Pointer<ByteV>(p, (unaligned ? 1:lanes)*sizeof(uint8_t)));
-                else if (format->bytesPerSample == 2)
-                    v = IntV(*Pointer<UShortV>(p, (unaligned ? 1:lanes)*sizeof(uint16_t)));
-                else if (format->bytesPerSample == 4)
-                    v = IntV(*Pointer<IntV>(p, (unaligned ? 1:lanes)*sizeof(uint32_t)));
+                if (format->bytesPerSample == 1) {
+                    if (regularLoad)
+                        v = IntV(*Pointer<ByteV>(p, (unaligned ? 1:lanes)*sizeof(uint8_t)));
+                    else
+                        v = IntV(Gather(Pointer<Byte>(p), offsets, IntV(~0), sizeof(uint8_t)));
+                } else if (format->bytesPerSample == 2) {
+                    if (regularLoad)
+                        v = IntV(*Pointer<UShortV>(p, (unaligned ? 1:lanes)*sizeof(uint16_t)));
+                    else
+                        v = IntV(Gather(Pointer<UShort>(p), offsets, IntV(~0), sizeof(uint16_t)));
+                } else if (format->bytesPerSample == 4) {
+                    if (regularLoad)
+                        v = IntV(*Pointer<IntV>(p, (unaligned ? 1:lanes)*sizeof(uint32_t)));
+                    else
+                        v = IntV(Gather(Pointer<Int>(p), offsets, IntV(~0), sizeof(uint16_t)));
+                }
                 v = relativeAccessAdjust<lanes>(x, state.x, state.width, op, v);
                 if (ctx.forceFloat())
                     OUT(FloatV(v));
@@ -683,8 +731,12 @@ void Compiler<lanes>::buildOneIter(const Helper &helpers, State &state)
                 FloatV v;
                 if (format->bytesPerSample == 2)
                     abort(); // XXX: f16 not supported
-                else if (format->bytesPerSample == 4)
-                    v = *Pointer<FloatV>(p, (unaligned ? 1:lanes)*sizeof(float));
+                else if (format->bytesPerSample == 4) {
+                    if (regularLoad)
+                        v = *Pointer<FloatV>(p, (unaligned ? 1:lanes)*sizeof(float));
+                    else
+                        v = Gather(Pointer<Float>(p), offsets, IntV(~0), sizeof(float));
+                }
                 v = relativeAccessAdjust<lanes>(x, state.x, state.width, op, v);
                 OUT(v);
             }
@@ -1180,6 +1232,9 @@ static void VS_CC exprCreate(const VSMap *in, VSMap *out, void *userData, VSCore
         int optMask = int64ToIntS(vsapi->propGetInt(in, "opt", 0, &err));
         if (err) optMask = 1;
 
+        int mirror = int64ToIntS(vsapi->propGetInt(in, "boundary", 0, &err));
+        if (err) mirror = 0;
+
         for (int i = 0; i < d->vi.format->numPlanes; i++) {
             if (!expr[i].empty()) {
                 d->plane[i] = poProcess;
@@ -1193,7 +1248,7 @@ static void VS_CC exprCreate(const VSMap *in, VSMap *out, void *userData, VSCore
             if (d->plane[i] != poProcess)
                 continue;
 
-            Compiler<LANES> comp(expr[i], &d->vi, vi, d->numInputs, optMask);
+            Compiler<LANES> comp(expr[i], &d->vi, vi, d->numInputs, optMask, mirror);
             d->compiled[i] = comp.compile();
             d->proc[i] = reinterpret_cast<ExprData::ProcessProc>(const_cast<void *>(d->compiled[i].routine->getEntry()));
         }
@@ -1244,7 +1299,7 @@ void VS_CC versionCreate(const VSMap *in, VSMap *out, void *user_data, VSCore *c
 
 void VS_CC exprInitialize(VSConfigPlugin configFunc, VSRegisterFunction registerFunc, VSPlugin *plugin) {
     //configFunc("com.vapoursynth.expr", "expr", "VapourSynth Expr Filter", VAPOURSYNTH_API_VERSION, 1, plugin);
-    registerFunc("Expr", "clips:clip[];expr:data[];format:int:opt;opt:int:opt;", exprCreate, nullptr, plugin);
+    registerFunc("Expr", "clips:clip[];expr:data[];format:int:opt;opt:int:opt;boundary:int:opt;", exprCreate, nullptr, plugin);
     registerFunc("Version", "", versionCreate, nullptr, plugin);
     initExpr();
 }

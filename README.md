@@ -4,7 +4,7 @@ Plugin akarin
 Expr
 ----
 
-`akarin.Expr(clip[] clips, string[] expr[, int format, int opt=1])`
+`akarin.Expr(clip[] clips, string[] expr[, int format, int opt=1, int boundary=0])`
 
 This works just like [`std.Expr`](http://www.vapoursynth.com/doc/functions/expr.html) (esp. with the same SIMD JIT support on x86 hosts), with the following additions:
 - use `x.PlaneStatsAverage` to load the `PlaneStatsAverage` frame property of the current frame in the given clip `x`.
@@ -21,7 +21,11 @@ This works just like [`std.Expr`](http://www.vapoursynth.com/doc/functions/expr.
   - Pop a value and store to variable `var`: `var!`
   - Read a variable `var` and push onto stack: `var@`
 - (\*) Static relative pixel access (modeled after [AVS+ Expr](http://avisynth.nl/index.php/Expr#Pixel_addressing))
-  - Use `x[relX,relY]` to access the pixel (relX, relY) relative to current coordinate, where -width < relX < width and -height < relY < height. Off screen pixels will be cloned from the respective edge. Both relX and relY should be constant.
+  - Use `x[relX,relY]` to access the pixel (relX, relY) relative to current coordinate, where -width < relX < width and -height < relY < height. Off screen pixels will be either cloned from the respective edge (clamped) or use the pixel mirror from the respective edge (mirrored). Both relX and relY should be constant.
+  - Optionally, use `:m` or `:c` suffixes to specify mirrored and clamped boundary conditions, respectively.
+  - The `boundary` argument specifies the default boundary condition for all relative pixel accesses without explicit specification:
+    - 0 means clamped
+    - 1 means mirroed
 - Support more bases for constants
   - hexadecimals: 0x123 or 0x123.4p5
   - octals: 023 (however, invalid octal numbers will be parsed as floating points, so "09" will be parsed the same as "9.0")
