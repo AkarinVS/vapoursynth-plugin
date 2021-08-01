@@ -1235,28 +1235,44 @@ do { \
         VEX2(xorps, y, t1, sign);
     }
 
-    void sin(const ExprInstruction &insn) override
+    void sincos(bool issin, const ExprInstruction &insn)
     {
-        deferred.push_back(EMIT()
+        int l = curLabel++;
+
+        deferred.push_back([this, issin, insn, l](Reg regptrs, XmmReg zero, Reg constants, std::pair<XmmReg, XmmReg> &regXs, XmmReg eight, Reg fconsts, std::unordered_map<int, std::pair<XmmReg, XmmReg>> &bytecodeRegs)
         {
+            char label[] = "label-0000";
+            sprintf(label, "label-%04d", l);
+
             auto t1 = bytecodeRegs[insn.src1];
             auto t3 = bytecodeRegs[insn.dst];
 
-            sincos_(true, t3.first, t1.first, constants);
-            sincos_(true, t3.second, t1.second, constants);
+            XmmReg r1, r2;
+            Reg a;
+            mov(a, 2);
+            VEX1(movaps, r1, t1.first);
+            VEX1(movaps, r2, t1.second);
+
+            L(label);
+
+            sincos_(issin, r1, r1, constants);
+            VEX1(movaps, t3.first, t3.second);
+            VEX1(movaps, t3.second, r1);
+            VEX1(movaps, r1, r2);
+
+            jit::sub(a, 1);
+            jnz(label);
         });
+    }
+
+    void sin(const ExprInstruction &insn) override
+    {
+        sincos(true, insn);
     }
 
     void cos(const ExprInstruction &insn) override
     {
-        deferred.push_back(EMIT()
-        {
-            auto t1 = bytecodeRegs[insn.src1];
-            auto t3 = bytecodeRegs[insn.dst];
-
-            sincos_(false, t3.first, t1.first, constants);
-            sincos_(false, t3.second, t1.second, constants);
-        });
+        sincos(false, insn);
     }
 
     void main(Reg regptrs, Reg regoffs, Reg fconsts, Reg niter)
