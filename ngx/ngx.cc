@@ -23,14 +23,14 @@ static const wchar_t *dllPath(const wchar_t *suffix);
 #define CK_NGX(x) do { \
     int r = (x); \
     if (r != NVSDK_NGX_Result_Success) { \
-        fprintf(stderr, "failed NGX call %s: %x\n", #x, r); \
+        fprintf(stderr, "failed NGX call %s: %x at line %d\n", #x, r, __LINE__); \
         abort(); \
     } \
 } while (0)
 #define CK_CUDA(x) do { \
     int r = (x); \
     if (r != CUDA_SUCCESS) { \
-        fprintf(stderr, "failed cuda call %s: %d\n", #x, r); \
+        fprintf(stderr, "failed cuda call %s: %d at line %d\n", #x, r, __LINE__); \
         abort(); \
     } \
 } while (0)
@@ -193,6 +193,7 @@ static void VS_CC ngxCreate(const VSMap *in, VSMap *out, void *userData, VSCore 
     std::unique_ptr<NgxData> d(new NgxData);
     int err;
 
+    int devid = 0;
     try {
         if (autoDllErrors.size() > 0) {
                 std::string error, last;
@@ -223,6 +224,9 @@ static void VS_CC ngxCreate(const VSMap *in, VSMap *out, void *userData, VSCore 
         if (scale != 2 && scale != 4 && scale != 8)
             throw std::runtime_error("scale must be 2/4/8");
         d->scale = scale;
+
+        devid = int64ToIntS(vsapi->propGetInt(in, "device_id", 0, &err));
+        if (err) devid = 0;
     } catch (std::runtime_error &e) {
         if (d->node)
             vsapi->freeNode(d->node);
@@ -259,6 +263,10 @@ static void VS_CC ngxCreate(const VSMap *in, VSMap *out, void *userData, VSCore 
         abort();
 
     // Create the feature
+    CUdevice dev = 0;
+    CK_CUDA(cuInit(0));
+    CK_CUDA(cuDeviceGet(&dev, devid));
+    CK_CUDA(cuCtxCreate_v2(&d->ctx, 0, dev));
     CK_NGX(NVSDK_NGX_CUDA_CreateFeature(NVSDK_NGX_Feature_ImageSuperResolution, d->param, &d->DUHandle));
     CK_CUDA(cuCtxGetCurrent(&d->ctx));
     d->allocate();
@@ -276,5 +284,5 @@ void VS_CC ngxInitialize(VSConfigPlugin configFunc, VSRegisterFunction registerF
 extern "C" void VS_CC VapourSynthPluginInit(VSConfigPlugin configFunc, VSRegisterFunction registerFunc, VSPlugin *plugin) {
     configFunc("info.akarin.plugin", "akarin2", "Experimental Nvidia DLISR plugin", VAPOURSYNTH_API_VERSION, 1, plugin);
 #endif
-    registerFunc("DLISR", "clip:clip;scale:int:opt", ngxCreate, nullptr, plugin);
+    registerFunc("DLISR", "clip:clip;scale:int:opt;device_id:int:opt;", ngxCreate, nullptr, plugin);
 }

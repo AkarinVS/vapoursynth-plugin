@@ -18,11 +18,12 @@ This filter also requires RTX-capable Nvidia GPU to run.
 DLISR
 -----
 
-`akarin.DLISR(clip clip, [, int scale=2])`
+`akarin.DLISR(clip clip, [, int scale=2, int device_id=0])`
 
 This filter will use Nvidia [NGX Technology](https://developer.nvidia.com/rtx/ngx) DLISR DNN to scale up an input clip.
 Input clip must be in `vs.RGBS` format.
 The `scale` parameter can only be 2/4/8 and note that this filter uses considerable amount of GPU memory (e.g. 2GB for 2x scaling 1080p input)
+Use `device_id` to select which GPU device to use.
 
 This filter requires `nvngx_dlisr.dll` to be present in the same directory as this plugin.
 This filter requires RTX-capable Nvidia GPU to run.
