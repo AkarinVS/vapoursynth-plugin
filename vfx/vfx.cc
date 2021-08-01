@@ -72,6 +72,8 @@ struct VfxData {
         NvCVImage_Dealloc(&srcGpuImg);
         NvCVImage_Dealloc(&dstCpuImg);
         NvCVImage_Dealloc(&dstGpuImg);
+        NvCVImage_Dealloc(&srcTmpImg);
+        NvCVImage_Dealloc(&dstTmpImg);
     }
 };
 
