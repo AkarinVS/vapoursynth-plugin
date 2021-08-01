@@ -1,6 +1,32 @@
 Plugin akarin
 =============
 
+DLVFX
+-----
+`akarin.DLVFX(clip clip, int op[, float scale=1, float strength=0])`
+
+There are three operation modes:
+- `op=0`: artefact reduction. `int strength` controls the strength.
+- `op=1`: super resolution, `scale>1` controls the scale factor. `int strength` controls the enhancement strength.
+- `op=2`: denoising. `float strength` controls the strength. (Not working.)
+
+Only 32-bit floating point RGB clips are supported for now.
+
+This filter requires appropriate [Video Effects library (v0.6 beta)](https://www.nvidia.com/en-us/geforce/broadcasting/broadcast-sdk/resources/) to be instaled. (This library is too large to be bundled with the plugin.)
+This filter also requires RTX-capable Nvidia GPU to run.
+
+DLISR
+-----
+
+`akarin.DLISR(clip clip, [, int scale=2])`
+
+This filter will use Nvidia [NGX Technology](https://developer.nvidia.com/rtx/ngx) DLISR DNN to scale up an input clip.
+Input clip must be in `vs.RGBS` format.
+The `scale` parameter can only be 2/4/8 and note that this filter uses considerable amount of GPU memory (e.g. 2GB for 2x scaling 1080p input)
+
+This filter requires `nvngx_dlisr.dll` to be present in the same directory as this plugin.
+This filter requires RTX-capable Nvidia GPU to run.
+
 Expr
 ----
 
