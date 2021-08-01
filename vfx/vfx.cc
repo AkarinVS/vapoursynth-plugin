@@ -53,9 +53,10 @@ struct VfxData {
     CUstream stream;
     CUdeviceptr state;
 
-    NvCVImage srcCpuImg, srcGpuImg;
-    NvCVImage dstCpuImg, dstGpuImg;
+    NvCVImage srcGpuImg;
+    NvCVImage dstGpuImg;
     NvCVImage srcTmpImg, dstTmpImg;
+    void *srcCpuBuf, *dstCpuBuf;
 
     typedef float T;
     uint64_t in_image_width() const   { return in_width; }
@@ -70,10 +71,11 @@ struct VfxData {
         if (state) cuMemFree_v2(state);
         NvCVImage_Dealloc(&srcCpuImg);
         NvCVImage_Dealloc(&srcGpuImg);
-        NvCVImage_Dealloc(&dstCpuImg);
         NvCVImage_Dealloc(&dstGpuImg);
         NvCVImage_Dealloc(&srcTmpImg);
         NvCVImage_Dealloc(&dstTmpImg);
+        cuMemFreeHost(srcCpuBuf);
+        cuMemFreeHost(dstCpuBuf);
     }
 };
 
@@ -106,29 +108,63 @@ static const VSFrameRef *VS_CC vfxGetFrame(int n, int activationReason, void **i
             const VSFrameRef *srcf[3] = { nullptr, nullptr, nullptr };
             VSFrameRef *dst = vsapi->newVideoFrame2(fi, d->out_image_width(), d->out_image_height(), srcf, planes, src, core);
 
-            auto host = static_cast<char*>(d->srcCpuImg.pixels);
+            auto host = static_cast<char*>(d->srcCpuBuf);
             for (int plane = 0; plane < 3; plane++) {
                 const auto stride = vsapi->getStride(src, plane);
                 const auto *ptr = vsapi->getReadPtr(src, plane);
                 const size_t w = d->in_image_width(), h = d->in_image_height();
-                const auto pitch = d->srcCpuImg.pitch;
+                const auto pitch = d->srcTmpImg.pitch;
                 vs_bitblt(host + pitch * h * plane, pitch, ptr, stride, w * d->vi.format->bytesPerSample, h);
             }
 
-            CK_VFX(NvCVImage_Transfer(&d->srcCpuImg, &d->srcGpuImg, 1.0f, d->stream, &d->srcTmpImg));
+            {
+                CUDA_MEMCPY2D mcp2d = {
+                    .srcXInBytes = 0,
+                    .srcY = 0,
+                    .srcMemoryType = CU_MEMORYTYPE_HOST,
+                    .srcHost = host,
+                    .srcPitch = (size_t)d->srcTmpImg.pitch,
+                    .dstXInBytes = 0,
+                    .dstY = 0,
+                    .dstMemoryType = CU_MEMORYTYPE_DEVICE,
+                    .dstDevice = (CUdeviceptr)d->srcTmpImg.pixels,
+                    .dstPitch = (size_t)d->srcTmpImg.pitch,
+                    .WidthInBytes = (size_t)d->in_image_width() * d->vi.format->bytesPerSample,
+                    .Height = d->in_image_height() * 3
+                };
+                CK_CUDA(cuMemcpy2DAsync_v2(&mcp2d, d->stream));
+            }
 
+            CK_VFX(NvCVImage_Transfer(&d->srcTmpImg, &d->srcGpuImg, 1.0f, d->stream, nullptr));
             CK_VFX(NvVFX_Run(d->vfx, 1));
+            CK_VFX(NvCVImage_Transfer(&d->dstGpuImg, &d->dstTmpImg, 1.0f, d->stream, nullptr));
 
-            CK_VFX(NvCVImage_Transfer(&d->dstGpuImg, &d->dstCpuImg, 1.0f, d->stream, &d->dstTmpImg));
+            host = static_cast<char*>(d->dstCpuBuf);
+            {
+                CUDA_MEMCPY2D mcp2d = {
+                    .srcXInBytes = 0,
+                    .srcY = 0,
+                    .srcMemoryType = CU_MEMORYTYPE_DEVICE,
+                    .srcDevice = (CUdeviceptr)d->dstTmpImg.pixels,
+                    .srcPitch = (size_t)d->dstTmpImg.pitch,
+                    .dstXInBytes = 0,
+                    .dstY = 0,
+                    .dstMemoryType = CU_MEMORYTYPE_HOST,
+                    .dstHost = host,
+                    .dstPitch = (size_t)d->dstTmpImg.pitch,
+                    .WidthInBytes = (size_t)d->out_image_width() * d->vi.format->bytesPerSample,
+                    .Height = d->out_image_height() * 3
+                };
+                CK_CUDA(cuMemcpy2DAsync_v2(&mcp2d, d->stream));
+            }
 
             CK_CUDA(cuStreamSynchronize(d->stream));
 
-            host = static_cast<char*>(d->dstCpuImg.pixels);
             for (int plane = 0; plane < 3; plane++) {
                 const auto stride = vsapi->getStride(dst, plane);
                 auto *ptr = vsapi->getWritePtr(dst, plane);
                 const size_t w = d->out_image_width(), h = d->out_image_height();
-                const auto pitch = d->dstCpuImg.pitch;
+                const auto pitch = d->dstTmpImg.pitch;
                 vs_bitblt(ptr, stride, host + pitch * h * plane, pitch, w * d->vi.format->bytesPerSample, h);
             }
 
@@ -273,12 +309,13 @@ static void VS_CC vfxCreate(const VSMap *in, VSMap *out, void *userData, VSCore 
             dst_ct = NVCV_U8;
         }
 
-        CK_VFX(NvCVImage_Alloc(&d->srcCpuImg, d->in_image_width(), d->in_image_height(), NVCV_RGB, src_ct, NVCV_PLANAR, NVCV_CPU, 0));
         CK_VFX(NvCVImage_Alloc(&d->srcTmpImg, d->in_image_width(), d->in_image_height(), NVCV_RGB, src_ct, NVCV_PLANAR, NVCV_GPU, 0));
         CK_VFX(NvCVImage_Alloc(&d->srcGpuImg, d->in_image_width(), d->in_image_height(), NVCV_BGR, NVCV_F32, NVCV_PLANAR, NVCV_GPU, 0));
-        CK_VFX(NvCVImage_Alloc(&d->dstCpuImg, d->out_image_width(), d->out_image_height(), NVCV_RGB, dst_ct, NVCV_PLANAR, NVCV_CPU, 0));
         CK_VFX(NvCVImage_Alloc(&d->dstTmpImg, d->out_image_width(), d->out_image_height(), NVCV_RGB, dst_ct, NVCV_PLANAR, NVCV_GPU, 0));
         CK_VFX(NvCVImage_Alloc(&d->dstGpuImg, d->out_image_width(), d->out_image_height(), NVCV_BGR, NVCV_F32, NVCV_PLANAR, NVCV_GPU, 0));
+
+        CK_CUDA(cuMemHostAlloc(&d->srcCpuBuf, d->srcTmpImg.pitch * d->in_image_height() * 3, CU_MEMHOSTALLOC_WRITECOMBINED));
+        CK_CUDA(cuMemHostAlloc(&d->dstCpuBuf, d->dstTmpImg.pitch * d->out_image_height() * 3, 0));
 
         CK_VFX(NvVFX_SetImage(d->vfx, NVVFX_INPUT_IMAGE, &d->srcGpuImg));
         CK_VFX(NvVFX_SetImage(d->vfx, NVVFX_OUTPUT_IMAGE, &d->dstGpuImg));
