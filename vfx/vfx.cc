@@ -53,6 +53,7 @@ struct VfxData {
 
     NvCVImage srcCpuImg, srcGpuImg;
     NvCVImage dstCpuImg, dstGpuImg;
+    NvCVImage srcTmpImg, dstTmpImg;
 
     typedef float T;
     uint64_t in_image_width() const   { return in_width; }
@@ -94,31 +95,30 @@ static const VSFrameRef *VS_CC vfxGetFrame(int n, int activationReason, void **i
 
         std::lock_guard<std::mutex> lock(d->lock);
 
-        typedef VfxData::T T;
-        T *host = (T *)d->srcCpuImg.pixels;
+        auto host = static_cast<char*>(d->srcCpuImg.pixels);
         for (int plane = 0; plane < 3; plane++) {
-            const size_t stride = vsapi->getStride(src, plane);
-            const uint8_t *ptr = (uint8_t*)vsapi->getReadPtr(src, plane);
+            const auto stride = vsapi->getStride(src, plane);
+            const auto *ptr = vsapi->getReadPtr(src, plane);
             const size_t w = d->in_image_width(), h = d->in_image_height();
-            for (size_t i = 0; i < h; i++)
-                for (size_t j = 0; j < w; j++)
-                    host[plane * h * w + i * w + j] = *(T*)&ptr[i * stride + j * sizeof(T)];
+            const auto pitch = d->srcCpuImg.pitch;
+            vs_bitblt(host + pitch * h * plane, pitch, ptr, stride, w * d->vi.format->bytesPerSample, h);
         }
 
-        CK_VFX(NvCVImage_Transfer(&d->srcCpuImg, &d->srcGpuImg, 1.0f, d->stream, nullptr));
+        CK_VFX(NvCVImage_Transfer(&d->srcCpuImg, &d->srcGpuImg, 1.0f, d->stream, &d->srcTmpImg));
 
-        CK_VFX(NvVFX_Run(d->vfx, 0));
+        CK_VFX(NvVFX_Run(d->vfx, 1));
 
-        CK_VFX(NvCVImage_Transfer(&d->dstGpuImg, &d->dstCpuImg, 1.0f, d->stream, nullptr));
+        CK_VFX(NvCVImage_Transfer(&d->dstGpuImg, &d->dstCpuImg, 1.0f, d->stream, &d->dstTmpImg));
 
-        host = (T *)d->dstCpuImg.pixels;
+        CK_CUDA(cuStreamSynchronize(d->stream));
+
+        host = static_cast<char*>(d->dstCpuImg.pixels);
         for (int plane = 0; plane < 3; plane++) {
-            const size_t stride = vsapi->getStride(dst, plane);
-            uint8_t *ptr = (uint8_t*)vsapi->getWritePtr(dst, plane);
+            const auto stride = vsapi->getStride(dst, plane);
+            auto *ptr = vsapi->getWritePtr(dst, plane);
             const size_t w = d->out_image_width(), h = d->out_image_height();
-            for (size_t i = 0; i < h; i++)
-                for (size_t j = 0; j < d->out_image_width(); j++)
-                    *(T*)&ptr[i * stride + j * sizeof(T)] = host[plane * h * w + i * w + j];
+            const auto pitch = d->dstCpuImg.pitch;
+            vs_bitblt(ptr, stride, host + pitch * h * plane, pitch, w * d->vi.format->bytesPerSample, h);
         }
 
         vsapi->freeFrame(src);
@@ -161,8 +161,6 @@ static void VS_CC vfxCreate(const VSMap *in, VSMap *out, void *userData, VSCore 
         }
         if (d->vi.format->numPlanes != 3 || d->vi.format->colorFamily != cmRGB)
             throw std::runtime_error("input clip must be RGB format");
-        if (d->vi.format->sampleType != stFloat || d->vi.format->bitsPerSample != 32)
-            throw std::runtime_error("input clip must be 32-bit float format");
 
         enum { OP_AR, OP_SUPERRES, OP_DENOISE };
         const NvVFX_EffectSelector selectors[] = { NVVFX_FX_ARTIFACT_REDUCTION, NVVFX_FX_SUPER_RES, NVVFX_FX_DENOISING };
@@ -237,10 +235,29 @@ static void VS_CC vfxCreate(const VSMap *in, VSMap *out, void *userData, VSCore 
     d->vi.width *= d->scale;
     d->vi.height *= d->scale;
 
-    CK_VFX(NvCVImage_Alloc(&d->srcCpuImg, d->in_image_width(), d->in_image_height(), NVCV_RGB, NVCV_F32, NVCV_PLANAR, NVCV_CPU, 1));
-    CK_VFX(NvCVImage_Alloc(&d->srcGpuImg, d->in_image_width(), d->in_image_height(), NVCV_BGR, NVCV_F32, NVCV_PLANAR, NVCV_GPU, 1));
-    CK_VFX(NvCVImage_Alloc(&d->dstCpuImg, d->out_image_width(), d->out_image_height(), NVCV_RGB, NVCV_F32, NVCV_PLANAR, NVCV_CPU, 1));
-    CK_VFX(NvCVImage_Alloc(&d->dstGpuImg, d->out_image_width(), d->out_image_height(), NVCV_BGR, NVCV_F32, NVCV_PLANAR, NVCV_GPU, 1));
+    NvCVImage_ComponentType src_ct, dst_ct;
+    if (auto bps = d->vi.format->bitsPerSample, st = d->vi.format->sampleType; bps == 32 && st == stFloat) {
+        src_ct = NVCV_F32;
+    } else if (bps == 8 && st == stInteger) {
+        src_ct = NVCV_U8;
+    } else {
+        throw std::runtime_error("unsupported clip format");
+    }
+
+    int output_depth = int64ToIntS(vsapi->propGetInt(in, "output_depth", 0, &err));
+    if (err) output_depth = d->vi.format->bitsPerSample;
+    if (output_depth == 32) {
+        dst_ct = NVCV_F32;
+    } else if (output_depth == 8) {
+        dst_ct = NVCV_U8;
+    }
+
+    CK_VFX(NvCVImage_Alloc(&d->srcCpuImg, d->in_image_width(), d->in_image_height(), NVCV_RGB, src_ct, NVCV_PLANAR, NVCV_CPU, 0));
+    CK_VFX(NvCVImage_Alloc(&d->srcTmpImg, d->in_image_width(), d->in_image_height(), NVCV_RGB, src_ct, NVCV_PLANAR, NVCV_GPU, 0));
+    CK_VFX(NvCVImage_Alloc(&d->srcGpuImg, d->in_image_width(), d->in_image_height(), NVCV_BGR, NVCV_F32, NVCV_PLANAR, NVCV_GPU, 0));
+    CK_VFX(NvCVImage_Alloc(&d->dstCpuImg, d->out_image_width(), d->out_image_height(), NVCV_RGB, dst_ct, NVCV_PLANAR, NVCV_CPU, 0));
+    CK_VFX(NvCVImage_Alloc(&d->dstTmpImg, d->out_image_width(), d->out_image_height(), NVCV_RGB, dst_ct, NVCV_PLANAR, NVCV_GPU, 0));
+    CK_VFX(NvCVImage_Alloc(&d->dstGpuImg, d->out_image_width(), d->out_image_height(), NVCV_BGR, NVCV_F32, NVCV_PLANAR, NVCV_GPU, 0));
 
     CK_VFX(NvVFX_SetImage(d->vfx, NVVFX_INPUT_IMAGE, &d->srcGpuImg));
     CK_VFX(NvVFX_SetImage(d->vfx, NVVFX_OUTPUT_IMAGE, &d->dstGpuImg));
@@ -261,5 +278,5 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit(VSConfigPlugin configFunc, VSRegiste
 #endif
     unsigned int version = 0;
     if (NvVFX_GetVersion(&version) == NVCV_SUCCESS)
-        registerFunc("DLVFX", "clip:clip;op:int;scale:float:opt;strength:float:opt", vfxCreate, nullptr, plugin);
+        registerFunc("DLVFX", "clip:clip;op:int;scale:float:opt;strength:float:opt;output_depth:int:opt", vfxCreate, nullptr, plugin);
 }
