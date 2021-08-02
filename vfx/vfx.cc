@@ -90,10 +90,10 @@ static const VSFrameRef *VS_CC vfxGetFrame(int n, int activationReason, void **i
     if (activationReason == arInitial) {
         vsapi->requestFrameFilter(n, ds->node, frameCtx);
     } else if (activationReason == arAllFramesReady) {
-        for (int i = 0; i < ds->num_streams; ++i) {
-            auto d = ds + i;
+        for (int i = 0; i <= ds->num_streams; ++i) {
+            auto d = i < ds->num_streams ? ds + i : ds + rand() % ds->num_streams;
             std::unique_lock<std::mutex> lock(d->lock, std::defer_lock);
-            if (i + 1 < ds->num_streams) {
+            if (i < ds->num_streams) {
                 if (!lock.try_lock()) continue;
             } else {
                 lock.lock();
