@@ -12,8 +12,8 @@ There are three operation modes:
 
 Only 32-bit floating point RGB clips are supported for now.
 
-This filter requires appropriate [Video Effects library (v0.6 beta)](https://www.nvidia.com/en-us/geforce/broadcasting/broadcast-sdk/resources/) to be instaled. (This library is too large to be bundled with the plugin.)
-This filter also requires RTX-capable Nvidia GPU to run.
+This filter requires appropriate [Video Effects library (v0.6 beta)](https://www.nvidia.com/en-us/geforce/broadcasting/broadcast-sdk/resources/) to be installed. (This library is too large to be bundled with the plugin.)
+This filter also requires RTX-capable NVidia GPU to run.
 
 DLISR
 -----
@@ -26,7 +26,7 @@ The `scale` parameter can only be 2/4/8 and note that this filter uses considera
 Use `device_id` to select which GPU device to use.
 
 This filter requires `nvngx_dlisr.dll` to be present in the same directory as this plugin.
-This filter requires RTX-capable Nvidia GPU to run.
+This filter requires RTX-capable NVidia GPU to run.
 
 Expr
 ----
@@ -52,7 +52,7 @@ This works just like [`std.Expr`](http://www.vapoursynth.com/doc/functions/expr.
   - Optionally, use `:m` or `:c` suffixes to specify mirrored and clamped boundary conditions, respectively.
   - The `boundary` argument specifies the default boundary condition for all relative pixel accesses without explicit specification:
     - 0 means clamped
-    - 1 means mirroed
+    - 1 means mirrored
 - Support more bases for constants
   - hexadecimals: 0x123 or 0x123.4p5
   - octals: 023 (however, invalid octal numbers will be parsed as floating points, so "09" will be parsed the same as "9.0")
@@ -70,14 +70,15 @@ Use this function to query the version and features of the plugin. It will retur
  b'N', b'X', b'Y', b'pi', b'width', b'height', # constants
  b'trunc', b'round', b'floor',  # truncation, round and floor
  b'@', b'!', # temporary variable access
- b'x[x,y]'   # relative pixel access
+ b'x[x,y]',  # relative pixel access
+ b'x[x,y]:m' # relative pixel access with mirrored boundary condition
 ]
 ```
 
 There are two implementations:
-1. The legacy jitasm based one.
+1. The legacy jitasm based one (deprecated, and no longer developed)
 If you encounter issues and suspect it's related to this JIT, you could set the `CPU_LEVEL` environment variable to 0/1/2 to force the *maximum* x86 ISA limit to interpreter/sse2/avx2, respectively. The actual ISA used will be determined based on runtime hardware capabilities and the limit (default to no limit).
 When reporting issues, please also try limiting the ISA to a lower level (at least try setting `CPU_LEVEL` to 0 to force using the interpreter) and see the problem still persists.
 
-2. The new LLVM based implementation (lexpr). Features labeled with (\*) is only available in this new implementation.
+2. The new LLVM based implementation (aka lexpr). Features labeled with (\*) is only available in this new implementation.
 If the `opt` argument is set to 1 (default), then it will activate an integer optimization mode, where intermediate values are computed with 32-bit integer for as long as possible. You have to make sure the intermediate value is always representable with int32 to use this optimization (as arithmetics will warp around in this mode.)
