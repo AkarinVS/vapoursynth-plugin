@@ -281,7 +281,7 @@ static void VS_CC ngxCreate(const VSMap *in, VSMap *out, void *userData, VSCore 
 #ifndef STANDALONE_NGX
 void VS_CC ngxInitialize(VSConfigPlugin configFunc, VSRegisterFunction registerFunc, VSPlugin *plugin) {
 #else
-extern "C" void VS_CC VapourSynthPluginInit(VSConfigPlugin configFunc, VSRegisterFunction registerFunc, VSPlugin *plugin) {
+VS_EXTERNAL_API(void) VS_CC VapourSynthPluginInit(VSConfigPlugin configFunc, VSRegisterFunction registerFunc, VSPlugin *plugin) {
     configFunc("info.akarin.plugin", "akarin2", "Experimental Nvidia DLISR plugin", VAPOURSYNTH_API_VERSION, 1, plugin);
 #endif
     registerFunc("DLISR", "clip:clip;scale:int:opt;device_id:int:opt;", ngxCreate, nullptr, plugin);
