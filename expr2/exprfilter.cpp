@@ -53,7 +53,7 @@ enum class ExprOpType {
     VAR_LOAD, VAR_STORE,
 
     // Arithmetic primitives.
-    ADD, SUB, MUL, DIV, MOD, SQRT, ABS, MAX, MIN, CMP,
+    ADD, SUB, MUL, DIV, MOD, SQRT, ABS, MAX, MIN, CLAMP, CMP,
 
     // Integer conversions.
     TRUNC, ROUND, FLOOR,
@@ -74,7 +74,7 @@ enum class ExprOpType {
 std::vector<std::string> features = {
     "x.property",
     "sin", "cos",
-    "%",
+    "%", "clip", "clamp",
     "N", "X", "Y", "pi", "width", "height",
     "trunc", "round", "floor",
     "@", "!",
@@ -198,6 +198,8 @@ ExprOp decodeToken(const std::string &token)
         { "abs",  { ExprOpType::ABS } },
         { "max",  { ExprOpType::MAX } },
         { "min",  { ExprOpType::MIN } },
+        { "clip", { ExprOpType::CLAMP } }, // for compat with AVS+ Expr
+        { "clamp",{ ExprOpType::CLAMP } },
         { "<",    { ExprOpType::CMP, static_cast<int>(ComparisonType::LT) } },
         { ">",    { ExprOpType::CMP, static_cast<int>(ComparisonType::NLE) } },
         { "=",    { ExprOpType::CMP, static_cast<int>(ComparisonType::EQ) } },
@@ -629,6 +631,7 @@ void Compiler<lanes>::buildOneIter(const Helper &helpers, State &state)
         1, // ABS
         2, // MAX
         2, // MIN
+        3, // CLAMP
         2, // CMP
         1, // TRUNC
         1, // ROUND
@@ -842,6 +845,18 @@ void Compiler<lanes>::buildOneIter(const Helper &helpers, State &state)
         case ExprOpType::ABS: UNARYOP(Abs, ctx.forceFloat());
         case ExprOpType::MAX: BINARYOP(Max, ctx.forceFloat());
         case ExprOpType::MIN: BINARYOP(Min, ctx.forceFloat());
+        case ExprOpType::CLAMP: {
+            LOAD2(min, max);
+            LOAD1(x);
+            if (x.isFloat() || min.isFloat() || max.isFloat() || ctx.forceFloat()) {
+                FloatV xf = x.ensureFloat();
+                FloatV minf = min.ensureFloat();
+                FloatV maxf = max.ensureFloat();
+                OUT(Max(Min(xf, maxf), minf));
+            } else
+                OUT(Max(Min(x.i(), max.i()), min.i()));
+            break;
+        }
 #define CMP(l, r) \
             switch (static_cast<ComparisonType>(op.imm.u)) { \
             case ComparisonType::EQ:  x = CmpEQ(l, r);  break; \
