@@ -43,6 +43,7 @@ This works just like [`std.Expr`](http://www.vapoursynth.com/doc/functions/expr.
 - The `sin` operator. The implementation is reasonably accurate for input magnitude up to 1e5 (absolute error up to 2e-6). Do not pass input whose magnitude is larger than 2e5.
 - The `cos` operator. The implementation is reasonably accurate for input magnitude up to 1e5 (absolute error up to 2e-6). Do not pass input whose magnitude is larger than 2e5.
 - The `%` binary operator, which implements C `fmodf`, e.g. `trunc` can be implemented as `dup 1.0 % -`.
+- The `clip` and `clamp` operators, which clamps an input to be within a given bound. `x 16 235 clip` is equivalent to `x 16 max 235 min`.
 - The `trunc` / `round` / `floor` operators that truncates/rounds/floors to integers.
 - (\*) Arbitrarily named temporary variables (modeled after [Forth](https://en.wikipedia.org/wiki/Forth_(programming_language)))
   - Pop a value and store to variable `var`: `var!`
@@ -66,10 +67,10 @@ Use this function to query the version and features of the plugin. It will retur
 ```python
 [
  b'x.property',  # frame property access
- b'sin', b'cos', b'%', # operators
+ b'sin', b'cos', b'%', b'clip', b'clamp', # operators
  b'N', b'X', b'Y', b'pi', b'width', b'height', # constants
  b'trunc', b'round', b'floor',  # truncation, round and floor
- b'@', b'!', # temporary variable access
+ b'var@', b'var!', # temporary variable access
  b'x[x,y]',  # relative pixel access
  b'x[x,y]:m' # relative pixel access with mirrored boundary condition
 ]

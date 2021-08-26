@@ -77,7 +77,7 @@ std::vector<std::string> features = {
     "%", "clip", "clamp",
     "N", "X", "Y", "pi", "width", "height",
     "trunc", "round", "floor",
-    "@", "!",
+    "var@", "var!",
     "x[x,y]", "x[x,y]:m",
 };
 
