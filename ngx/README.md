@@ -1,6 +1,6 @@
 To build a standalone plugin:
 ```
-g++ -o akarin2.dll -shared -gdb ngx*.cc -I. -I ../include -static -DSTANDALONE_NGX
+g++ -o akarin2.dll -shared -ggdb ngx*.cc -I. -I ../include -static -DSTANDALONE_NGX
 ```
 
 To use the plugin:
