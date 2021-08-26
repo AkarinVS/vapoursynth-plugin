@@ -15,7 +15,7 @@ struct importDll {
 	importDll(T &x, const wchar_t *dllName, const char *displayname, std::vector<std::string> &errors, const char *name) {
 		HMODULE h = LoadLibraryW(dllName);
 #else
-	importDll(T &x, const char *dllName, const char *name, std::vector<std::string> &errors) {
+	importDll(T &x, const char *dllName, std::vector<std::string> &errors, const char *name) {
 		const char *displayname = dllName;
 		void *h = dlopen(dllName, RTLD_GLOBAL | RTLD_LAZY);
 #endif
