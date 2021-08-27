@@ -69,7 +69,6 @@ struct VfxData {
         if (vfx) NvVFX_DestroyEffect(vfx);
         if (stream) NvVFX_CudaStreamDestroy(stream);
         if (state) cuMemFree_v2(state);
-        NvCVImage_Dealloc(&srcCpuImg);
         NvCVImage_Dealloc(&srcGpuImg);
         NvCVImage_Dealloc(&dstGpuImg);
         NvCVImage_Dealloc(&srcTmpImg);
