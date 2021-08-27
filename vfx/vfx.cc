@@ -117,20 +117,19 @@ static const VSFrameRef *VS_CC vfxGetFrame(int n, int activationReason, void **i
             }
 
             {
-                CUDA_MEMCPY2D mcp2d = {
-                    .srcXInBytes = 0,
-                    .srcY = 0,
-                    .srcMemoryType = CU_MEMORYTYPE_HOST,
-                    .srcHost = host,
-                    .srcPitch = (size_t)d->srcTmpImg.pitch,
-                    .dstXInBytes = 0,
-                    .dstY = 0,
-                    .dstMemoryType = CU_MEMORYTYPE_DEVICE,
-                    .dstDevice = (CUdeviceptr)d->srcTmpImg.pixels,
-                    .dstPitch = (size_t)d->srcTmpImg.pitch,
-                    .WidthInBytes = (size_t)d->in_image_width() * d->vi.format->bytesPerSample,
-                    .Height = d->in_image_height() * 3
-                };
+                CUDA_MEMCPY2D mcp2d = {};
+                mcp2d.srcXInBytes = 0;
+                mcp2d.srcY = 0;
+                mcp2d.srcMemoryType = CU_MEMORYTYPE_HOST;
+                mcp2d.srcHost = host;
+                mcp2d.srcPitch = (size_t)d->srcTmpImg.pitch;
+                mcp2d.dstXInBytes = 0;
+                mcp2d.dstY = 0;
+                mcp2d.dstMemoryType = CU_MEMORYTYPE_DEVICE;
+                mcp2d.dstDevice = (CUdeviceptr)d->srcTmpImg.pixels;
+                mcp2d.dstPitch = (size_t)d->srcTmpImg.pitch;
+                mcp2d.WidthInBytes = (size_t)d->in_image_width() * d->vi.format->bytesPerSample;
+                mcp2d.Height = d->in_image_height() * 3;
                 CK_CUDA(cuMemcpy2DAsync_v2(&mcp2d, d->stream));
             }
 
@@ -140,20 +139,19 @@ static const VSFrameRef *VS_CC vfxGetFrame(int n, int activationReason, void **i
 
             host = static_cast<char*>(d->dstCpuBuf);
             {
-                CUDA_MEMCPY2D mcp2d = {
-                    .srcXInBytes = 0,
-                    .srcY = 0,
-                    .srcMemoryType = CU_MEMORYTYPE_DEVICE,
-                    .srcDevice = (CUdeviceptr)d->dstTmpImg.pixels,
-                    .srcPitch = (size_t)d->dstTmpImg.pitch,
-                    .dstXInBytes = 0,
-                    .dstY = 0,
-                    .dstMemoryType = CU_MEMORYTYPE_HOST,
-                    .dstHost = host,
-                    .dstPitch = (size_t)d->dstTmpImg.pitch,
-                    .WidthInBytes = (size_t)d->out_image_width() * d->vi.format->bytesPerSample,
-                    .Height = d->out_image_height() * 3
-                };
+                CUDA_MEMCPY2D mcp2d = {};
+                mcp2d.srcXInBytes = 0;
+                mcp2d.srcY = 0;
+                mcp2d.srcMemoryType = CU_MEMORYTYPE_DEVICE;
+                mcp2d.srcDevice = (CUdeviceptr)d->dstTmpImg.pixels;
+                mcp2d.srcPitch = (size_t)d->dstTmpImg.pitch;
+                mcp2d.dstXInBytes = 0;
+                mcp2d.dstY = 0;
+                mcp2d.dstMemoryType = CU_MEMORYTYPE_HOST;
+                mcp2d.dstHost = host;
+                mcp2d.dstPitch = (size_t)d->dstTmpImg.pitch;
+                mcp2d.WidthInBytes = (size_t)d->out_image_width() * d->vi.format->bytesPerSample;
+                mcp2d.Height = d->out_image_height() * 3;
                 CK_CUDA(cuMemcpy2DAsync_v2(&mcp2d, d->stream));
             }
 
