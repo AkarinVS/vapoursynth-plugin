@@ -117,14 +117,10 @@ static const VSFrameRef *VS_CC vfxGetFrame(int n, int activationReason, void **i
             }
 
             {
-                CUDA_MEMCPY2D mcp2d = {};
-                mcp2d.srcXInBytes = 0;
-                mcp2d.srcY = 0;
+                CUDA_MEMCPY2D mcp2d {};
                 mcp2d.srcMemoryType = CU_MEMORYTYPE_HOST;
                 mcp2d.srcHost = host;
                 mcp2d.srcPitch = (size_t)d->srcTmpImg.pitch;
-                mcp2d.dstXInBytes = 0;
-                mcp2d.dstY = 0;
                 mcp2d.dstMemoryType = CU_MEMORYTYPE_DEVICE;
                 mcp2d.dstDevice = (CUdeviceptr)d->srcTmpImg.pixels;
                 mcp2d.dstPitch = (size_t)d->srcTmpImg.pitch;
@@ -139,14 +135,10 @@ static const VSFrameRef *VS_CC vfxGetFrame(int n, int activationReason, void **i
 
             host = static_cast<char*>(d->dstCpuBuf);
             {
-                CUDA_MEMCPY2D mcp2d = {};
-                mcp2d.srcXInBytes = 0;
-                mcp2d.srcY = 0;
+                CUDA_MEMCPY2D mcp2d {};
                 mcp2d.srcMemoryType = CU_MEMORYTYPE_DEVICE;
                 mcp2d.srcDevice = (CUdeviceptr)d->dstTmpImg.pixels;
                 mcp2d.srcPitch = (size_t)d->dstTmpImg.pitch;
-                mcp2d.dstXInBytes = 0;
-                mcp2d.dstY = 0;
                 mcp2d.dstMemoryType = CU_MEMORYTYPE_HOST;
                 mcp2d.dstHost = host;
                 mcp2d.dstPitch = (size_t)d->dstTmpImg.pitch;
