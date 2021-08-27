@@ -179,6 +179,9 @@ typedef enum CUmemorytype_enum {
     CU_MEMORYTYPE_UNIFIED = 0x04
 } CUmemorytype;
 
+// cuMemHostAlloc flags
+#define CU_MEMHOSTALLOC_WRITECOMBINED 0x04
+
 typedef struct CUDA_MEMCPY3D_st {
     size_t srcXInBytes;         /**< Source X in bytes */
     size_t srcY;                /**< Source Y */
@@ -208,6 +211,33 @@ typedef struct CUDA_MEMCPY3D_st {
     size_t Height;       /**< Height of 3D memory copy */
     size_t Depth;        /**< Depth of 3D memory copy */
 } CUDA_MEMCPY3D;
+
+/**
+ * 2D memory copy parameters
+ */
+typedef struct CUDA_MEMCPY2D_st {
+    size_t srcXInBytes;         /**< Source X in bytes */
+    size_t srcY;                /**< Source Y */
+
+    CUmemorytype srcMemoryType; /**< Source memory type (host, device, array) */
+    const void *srcHost;        /**< Source host pointer */
+    CUdeviceptr srcDevice;      /**< Source device pointer */
+    CUarray srcArray;           /**< Source array reference */
+    size_t srcPitch;            /**< Source pitch (ignored when src is array) */
+
+    size_t dstXInBytes;         /**< Destination X in bytes */
+    size_t dstY;                /**< Destination Y */
+
+    CUmemorytype dstMemoryType; /**< Destination memory type (host, device, array) */
+    void *dstHost;              /**< Destination host pointer */
+    CUdeviceptr dstDevice;      /**< Destination device pointer */
+    CUarray dstArray;           /**< Destination array reference */
+    size_t dstPitch;            /**< Destination pitch (ignored when dst is array) */
+
+    size_t WidthInBytes;        /**< Width of 2D memory copy in bytes */
+    size_t Height;              /**< Height of 2D memory copy */
+} CUDA_MEMCPY2D_v2;
+typedef CUDA_MEMCPY2D_v2 CUDA_MEMCPY2D;
 
 typedef int CUjit_option;
 
@@ -246,9 +276,14 @@ CUDA_FN(CUresult, cuModuleUnload, (CUmodule module));
 CUDA_FN(CUresult, cuModuleGetFunction, (CUfunction * hfunc, CUmodule hmod, const char *name));
 CUDA_FN_3020(CUresult, cuMemAlloc, cuMemAlloc_v2, (CUdeviceptr * dptr, size_t bytesize));
 CUDA_FN_3020(CUresult, cuMemFree, cuMemFree_v2, (CUdeviceptr dptr));
+CUDA_FN(CUresult, cuMemHostAlloc, (void** pp, size_t bytesize, unsigned int flags));
+CUDA_FN(CUresult, cuMemFreeHost, (void* p));
 CUDA_FN_3020(CUresult, cuMemcpyHtoD, cuMemcpyHtoD_v2, (CUdeviceptr dstDevice, const void *srcHost, size_t ByteCount));
 CUDA_FN_3020(CUresult, cuMemcpyDtoH, cuMemcpyDtoH_v2, (void *dstHost, CUdeviceptr srcDevice, size_t ByteCount));
 CUDA_FN_3020(CUresult, cuMemcpyDtoD, cuMemcpyDtoD_v2, (CUdeviceptr dstHost, CUdeviceptr srcDevice, size_t ByteCount));
+CUDA_FN(CUresult, cuMemcpy2DAsync_v2, (const CUDA_MEMCPY2D* pCopy, CUstream hStream));
+
+CUDA_FN(CUresult, cuStreamSynchronize, (CUstream hStream));
 
 CUDA_FN(CUresult, cuMemsetD8Async, (CUdeviceptr devPtr, int value, size_t count, CUstream st));
 
