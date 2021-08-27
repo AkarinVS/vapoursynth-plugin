@@ -6,7 +6,7 @@ Play with VideoEffectsApp.exe to make sure it works before proceeding.
 
 And then build the plugin like this with mingw:
 ```
-g++ -DSTANDALONE_VFX -o akarin2.dll -shared -static vfx.cc -I ../include nvvfx/src/*.cpp -I nvvfx/include -Wall -O2
+g++ -DSTANDALONE_VFX -o akarin2.dll -shared -static vfx.cc -I ../include nvvfx/src/*.cpp -I nvvfx/include -Wall -O2 -std=c++17
 ```
 
 Example code:
