@@ -3,14 +3,17 @@ Plugin akarin
 
 DLVFX
 -----
-`akarin.DLVFX(clip clip, int op[, float scale=1, float strength=0])`
+`akarin.DLVFX(clip clip, int op[, float scale=1, float strength=0, int output_depth=clip.format.bits_per_sample, int num_streams=1])`
 
 There are three operation modes:
 - `op=0`: artefact reduction. `int strength` controls the strength.
 - `op=1`: super resolution, `scale>1` controls the scale factor. `int strength` controls the enhancement strength.
 - `op=2`: denoising. `float strength` controls the strength. (Not working.)
 
-Only 32-bit floating point RGB clips are supported for now.
+Usage Notes:
+- Only 32-bit floating point RGB and 8-bit integer RGB24 clips are supported as input `clip`.
+- The output defaults to the same format as the input, however, you can set `output_depth` to 32 (RGBS) or 8 (RGB24) to override the default.
+- Setting `num_streams>1` will improve the performance by parallelizing processing of multiple frames on the GPU and will improve performance, as long as your GPU is capable enough to handle it.
 
 This filter requires appropriate [Video Effects library (v0.6 beta)](https://www.nvidia.com/en-us/geforce/broadcasting/broadcast-sdk/resources/) to be installed. (This library is too large to be bundled with the plugin.)
 This filter also requires RTX-capable NVidia GPU to run.
