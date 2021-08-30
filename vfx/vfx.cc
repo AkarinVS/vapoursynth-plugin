@@ -143,7 +143,7 @@ static const VSFrameRef *VS_CC vfxGetFrame(int n, int activationReason, void **i
                 mcp2d.dstMemoryType = CU_MEMORYTYPE_HOST;
                 mcp2d.dstHost = host;
                 mcp2d.dstPitch = (size_t)d->dstTmpImg.pitch;
-                mcp2d.WidthInBytes = (size_t)d->out_image_width() * d->vi.format->bytesPerSample;
+                mcp2d.WidthInBytes = (size_t)d->out_image_width() * d->output_depth / 8;
                 mcp2d.Height = d->out_image_height() * 3;
                 CK_CUDA(cuMemcpy2DAsync_v2(&mcp2d, d->stream));
             }
