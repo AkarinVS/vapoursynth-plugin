@@ -46,6 +46,7 @@ struct VfxData {
     VSVideoInfo vi;
     double scale;
     double strength;
+    int output_depth;
 
     int in_width, in_height;
 
@@ -100,7 +101,7 @@ static const VSFrameRef *VS_CC vfxGetFrame(int n, int activationReason, void **i
 
             const VSFrameRef *src = vsapi->getFrameFilter(n, d->node, frameCtx);
 
-            const VSFormat *fi = d->vi.format;
+            const VSFormat *fi = vsapi->registerFormat(cmRGB, d->output_depth == 32 ? stFloat : stInteger, d->output_depth, 0, 0, core);
             assert(vsapi->getFrameHeight(src, 0) == (int)d->in_image_height());
             assert(vsapi->getFrameWidth(src, 0) == (int)d->in_image_width());
             int planes[3] = { 0, 1, 2 };
@@ -154,7 +155,7 @@ static const VSFrameRef *VS_CC vfxGetFrame(int n, int activationReason, void **i
                 auto *ptr = vsapi->getWritePtr(dst, plane);
                 const size_t w = d->out_image_width(), h = d->out_image_height();
                 const auto pitch = d->dstTmpImg.pitch;
-                vs_bitblt(ptr, stride, host + pitch * h * plane, pitch, w * d->vi.format->bytesPerSample, h);
+                vs_bitblt(ptr, stride, host + pitch * h * plane, pitch, w * d->output_depth / 8, h);
             }
 
             vsapi->freeFrame(src);
@@ -292,6 +293,7 @@ static void VS_CC vfxCreate(const VSMap *in, VSMap *out, void *userData, VSCore 
 
         int output_depth = int64ToIntS(vsapi->propGetInt(in, "output_depth", 0, &err));
         if (err) output_depth = d->vi.format->bitsPerSample;
+        d->output_depth = output_depth;
         if (output_depth == 32) {
             dst_ct = NVCV_F32;
         } else if (output_depth == 8) {
