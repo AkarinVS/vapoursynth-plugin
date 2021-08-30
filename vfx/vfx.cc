@@ -298,6 +298,8 @@ static void VS_CC vfxCreate(const VSMap *in, VSMap *out, void *userData, VSCore 
             dst_ct = NVCV_F32;
         } else if (output_depth == 8) {
             dst_ct = NVCV_U8;
+        } else {
+            throw std::runtime_error("unsupported output_depth");
         }
 
         CK_VFX(NvCVImage_Alloc(&d->srcTmpImg, d->in_image_width(), d->in_image_height(), NVCV_RGB, src_ct, NVCV_PLANAR, NVCV_GPU, 0));
