@@ -35,6 +35,7 @@ static const wchar_t *dllPath(const wchar_t *suffix);
     } \
 } while (0)
 
+#ifdef _WIN32
 static const wchar_t *dllPath(const wchar_t *suffix) {
     static const std::wstring res = [suffix]() -> std::wstring {
         HMODULE mod = 0;
@@ -54,6 +55,7 @@ static const wchar_t *dllPath(const wchar_t *suffix) {
     }();
     return res.c_str();
 }
+#endif
 
 static void *cudaMalloc(size_t size) {
     void *ptr = nullptr;
