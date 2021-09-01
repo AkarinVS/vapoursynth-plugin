@@ -54,6 +54,7 @@ struct VfxData {
     CUstream stream;
     CUdeviceptr state;
 
+    float srcTransferFactor, dstTransferFactor;
     NvCVImage srcGpuImg;
     NvCVImage dstGpuImg;
     NvCVImage srcTmpImg, dstTmpImg;
@@ -130,9 +131,9 @@ static const VSFrameRef *VS_CC vfxGetFrame(int n, int activationReason, void **i
                 CK_CUDA(cuMemcpy2DAsync_v2(&mcp2d, d->stream));
             }
 
-            CK_VFX(NvCVImage_Transfer(&d->srcTmpImg, &d->srcGpuImg, 1.0f, d->stream, nullptr));
+            CK_VFX(NvCVImage_Transfer(&d->srcTmpImg, &d->srcGpuImg, d->srcTransferFactor, d->stream, nullptr));
             CK_VFX(NvVFX_Run(d->vfx, 1));
-            CK_VFX(NvCVImage_Transfer(&d->dstGpuImg, &d->dstTmpImg, 1.0f, d->stream, nullptr));
+            CK_VFX(NvCVImage_Transfer(&d->dstGpuImg, &d->dstTmpImg, d->dstTransferFactor, d->stream, nullptr));
 
             host = static_cast<char*>(d->dstCpuBuf);
             {
@@ -285,8 +286,10 @@ static void VS_CC vfxCreate(const VSMap *in, VSMap *out, void *userData, VSCore 
         NvCVImage_ComponentType src_ct, dst_ct;
         if (auto bps = d->vi.format->bitsPerSample, st = d->vi.format->sampleType; bps == 32 && st == stFloat) {
             src_ct = NVCV_F32;
+	    d->srcTransferFactor = 1.0f;
         } else if (bps == 8 && st == stInteger) {
             src_ct = NVCV_U8;
+	    d->srcTransferFactor = 1.0f/255.0f;
         } else {
             throw std::runtime_error("unsupported clip format");
         }
@@ -296,11 +299,13 @@ static void VS_CC vfxCreate(const VSMap *in, VSMap *out, void *userData, VSCore 
         d->output_depth = output_depth;
         if (output_depth == 32) {
             dst_ct = NVCV_F32;
+	    d->dstTransferFactor = 1.0f;
         } else if (output_depth == 8) {
             dst_ct = NVCV_U8;
+	    d->dstTransferFactor = 255.0f;;
         } else {
-            throw std::runtime_error("unsupported output_depth");
-        }
+            throw std::runtime_error("unsupported output_depth: only 8 (RGB24) or 32 (RGBS) are supported");
+	}
 
         CK_VFX(NvCVImage_Alloc(&d->srcTmpImg, d->in_image_width(), d->in_image_height(), NVCV_RGB, src_ct, NVCV_PLANAR, NVCV_GPU, 0));
         CK_VFX(NvCVImage_Alloc(&d->srcGpuImg, d->in_image_width(), d->in_image_height(), NVCV_BGR, NVCV_F32, NVCV_PLANAR, NVCV_GPU, 0));
