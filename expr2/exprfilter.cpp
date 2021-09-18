@@ -1245,7 +1245,7 @@ static void VS_CC exprCreate(const VSMap *in, VSMap *out, void *userData, VSCore
         }
 
         int optMask = int64ToIntS(vsapi->propGetInt(in, "opt", 0, &err));
-        if (err) optMask = 1;
+        if (err) optMask = 0;
 
         int mirror = int64ToIntS(vsapi->propGetInt(in, "boundary", 0, &err));
         if (err) mirror = 0;

@@ -36,7 +36,7 @@ Due to peculiar nature of its implementation, this filter only works if it is th
 Expr
 ----
 
-`akarin.Expr(clip[] clips, string[] expr[, int format, int opt=1, int boundary=0])`
+`akarin.Expr(clip[] clips, string[] expr[, int format, int opt=0, int boundary=0])`
 
 This works just like [`std.Expr`](http://www.vapoursynth.com/doc/functions/expr.html) (esp. with the same SIMD JIT support on x86 hosts), with the following additions:
 - use `x.PlaneStatsAverage` to load the `PlaneStatsAverage` frame property of the current frame in the given clip `x`.
@@ -87,4 +87,4 @@ If you encounter issues and suspect it's related to this JIT, you could set the 
 When reporting issues, please also try limiting the ISA to a lower level (at least try setting `CPU_LEVEL` to 0 to force using the interpreter) and see the problem still persists.
 
 2. The new LLVM based implementation (aka lexpr). Features labeled with (\*) is only available in this new implementation.
-If the `opt` argument is set to 1 (default), then it will activate an integer optimization mode, where intermediate values are computed with 32-bit integer for as long as possible. You have to make sure the intermediate value is always representable with int32 to use this optimization (as arithmetics will warp around in this mode.)
+If the `opt` argument is set to 1 (default 0), then it will activate an integer optimization mode, where intermediate values are computed with 32-bit integer for as long as possible. You have to make sure the intermediate value is always representable with int32 to use this optimization (as arithmetics will warp around in this mode.)
