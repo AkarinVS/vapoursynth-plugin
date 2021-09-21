@@ -317,6 +317,8 @@ public:
     typedef uint32_t SwizzleMask;
 };
 
+static std::unordered_map<std::string, Compiled> exprCache;
+
 template<int lanes>
 class Compiler {
     struct Context {
@@ -328,8 +330,15 @@ class Compiler {
         int numInputs;
         int optMask;
         bool mirror;
+        bool cached;
         Context(const std::string &expr, const VSVideoInfo *vo, const VSVideoInfo *const *vi, int numInputs, int opt, int mirror):
-            expr(expr), vo(vo), vi(vi), numInputs(numInputs), optMask(opt), mirror(!!mirror) {
+            expr(expr), vo(vo), vi(vi), numInputs(numInputs), optMask(opt), mirror(!!mirror), cached(false) {
+            auto iter = exprCache.find(key());
+            if (iter != exprCache.end()) {
+                cached = true;
+                return;
+            }
+
             tokens = tokenize(expr);
             for (const auto &tok: tokens) {
                 auto op = decodeToken(tok);
@@ -341,6 +350,20 @@ class Compiler {
         enum {
             flagUseInteger = 1<<0,
         };
+        static std::string videoInfoKey(const VSVideoInfo *vi) {
+            std::stringstream ss;
+            ss << vi->format->name << ";";
+            return ss.str();
+        }
+        std::string key() const {
+            std::stringstream ss;
+            ss << "n=" << numInputs << "|opt=" << optMask << "|mirror=" << mirror
+                << "|expr=" << expr << "|vo=" << videoInfoKey(vo);
+            for (int i = 0; i < numInputs; i++)
+                ss << "|vi" << i << "=" << videoInfoKey(vi[i]);
+            return ss.str();
+        }
+        Compiled getCached() { return exprCache[key()]; }
 
         bool forceFloat() const { return !(optMask & flagUseInteger); }
     } ctx;
@@ -1009,6 +1032,10 @@ typename Compiler<lanes>::Helper Compiler<lanes>::buildHelpers(rr::Module &mod)
 template<int lanes>
 Compiled Compiler<lanes>::compile()
 {
+    if (ctx.cached) {
+        return ctx.getCached();
+    }
+
     using namespace rr;
     Module mod;
 
@@ -1084,7 +1111,9 @@ Compiled Compiler<lanes>::compile()
     }
     Return();
 
-    return Compiled{ mod.acquire("proc"), pa };
+    Compiled r { mod.acquire("proc"), pa };
+    exprCache.insert({ctx.key(), r});
+    return r;
 }
 
 
