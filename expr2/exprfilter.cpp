@@ -17,6 +17,10 @@
 * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 */
 
+#ifndef _WIN32
+#define USE_EXPR_CACHE // crash at dll unload time on Windows
+#endif
+
 #include <algorithm>
 #include <cmath>
 #include <cctype>
@@ -1112,7 +1116,9 @@ Compiled Compiler<lanes>::compile()
     Return();
 
     Compiled r { mod.acquire("proc"), pa };
+#ifdef USE_EXPR_CACHE
     exprCache.insert({ctx.key(), r});
+#endif
     return r;
 }
 
