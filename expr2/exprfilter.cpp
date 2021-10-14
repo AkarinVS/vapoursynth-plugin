@@ -71,8 +71,11 @@ enum class ExprOpType {
     // Ternary operator
     TERNARY,
 
+    // Rank-order operator
+    SORT,
+
     // Stack helpers.
-    DUP, SWAP,
+    DUP, SWAP, DROP,
 };
 
 std::vector<std::string> features = {
@@ -83,6 +86,8 @@ std::vector<std::string> features = {
     "trunc", "round", "floor",
     "var@", "var!",
     "x[x,y]", "x[x,y]:m",
+    "drop",
+    "sort",
 };
 
 enum class ComparisonType {
@@ -224,6 +229,7 @@ ExprOp decodeToken(const std::string &token)
         { "cos",  { ExprOpType::COS } },
         { "dup",  { ExprOpType::DUP, 0 } },
         { "swap", { ExprOpType::SWAP, 1 } },
+        { "drop", { ExprOpType::DROP, 1 } },
         { "pi",   { ExprOpType::CONSTANTF, static_cast<float>(M_PI) } },
         { "N",    { ExprOpType::CONST_LOAD, static_cast<int>(LoadConstType::N) } },
         { "X",    { ExprOpType::CONST_LOAD, static_cast<int>(LoadConstType::X) } },
@@ -239,8 +245,10 @@ ExprOp decodeToken(const std::string &token)
         return it->second;
     } else if (token.size() == 1 && token[0] >= 'a' && token[0] <= 'z') {
         return{ ExprOpType::MEM_LOAD, token[0] >= 'x' ? token[0] - 'x' : token[0] - 'a' + 3 };
-    } else if (token.substr(0, 3) == "dup" || token.substr(0, 4) == "swap") {
-        size_t prefix = token[0] == 'd' ? 3 : 4;
+    } else if ((token.back() != '@' && token.back() != '!') &&
+               (token.substr(0, 3) == "dup" || token.substr(0, 4) == "swap" ||
+                token.substr(0, 4) == "drop" || token.substr(0, 4) == "sort")) {
+        size_t prefix = token[1] == 'u' ? 3 : 4;
         size_t count = 0;
         int idx = -1;
 
@@ -252,7 +260,14 @@ ExprOp decodeToken(const std::string &token)
 
         if (idx < 0 || prefix + count != token.size())
             throw std::runtime_error("illegal token: " + token);
-        return{ token[0] == 'd' ? ExprOpType::DUP : ExprOpType::SWAP, idx };
+        if (token[1] == 'u')
+            return{ ExprOpType::DUP, idx };
+        else if (token[1] == 'w')
+            return{ ExprOpType::SWAP, idx };
+        else if (token[1] == 'r')
+            return{ ExprOpType::DROP, idx };
+        else //if (token[1] == 'o')
+            return{ ExprOpType::SORT, idx };
     } else if (token.size() >= 2 && (token.back() == '@' || token.back() == '!')) {
         // 'name@' load variable; 'name!' store to variable.
         return{ token.back() == '@' ? ExprOpType::VAR_LOAD : ExprOpType::VAR_STORE, -1, token.substr(0, token.size()-1) };
@@ -414,6 +429,9 @@ class Compiler {
         IntV i() { return std::get<IntV>(v); }
 
         FloatV ensureFloat() { return isFloat() ? f() : FloatV(i()); }
+
+        Value Max(Value &rhs) { return (isFloat() || rhs.isFloat()) ? Value(rr::Max(f(), rhs.f())) : Value(rr::Max(i(), rhs.i())); }
+        Value Min(Value &rhs) { return (isFloat() || rhs.isFloat()) ? Value(rr::Min(f(), rhs.f())) : Value(rr::Min(i(), rhs.i())); }
     };
 
     struct State {
@@ -639,6 +657,33 @@ static VType relativeAccessAdjust(rr::Int &x, rr::Int &alignedx, rr::Int &width,
     return v;
 }
 
+typedef std::vector<std::pair<int, int>> SortingNetwork;
+static const SortingNetwork &buildSortNet(int n) {
+    static std::map<int, SortingNetwork> built;
+    auto it = built.find(n);
+    if (it != built.end()) return it->second;
+
+    built.insert({ n, {} });
+    auto &sn = built.find(n)->second;
+
+    int t = 0;
+    while (n > (1<<t)) t++;
+    int p = 1 << (t - 1);
+    while (p > 0) {
+        int q = 1 << (t - 1), r = 0, d = p;
+        while (d > 0) {
+            for (int i = 0; i < n - d; i++)
+                if ((i & p) == r)
+                    sn.emplace_back(i, i+d);
+            d = q - p;
+            q >>= 1;
+            r = p;
+        }
+        p >>= 1;
+    }
+    return sn;
+}
+
 template<int lanes>
 void Compiler<lanes>::buildOneIter(const Helper &helpers, State &state)
 {
@@ -673,10 +718,12 @@ void Compiler<lanes>::buildOneIter(const Helper &helpers, State &state)
         1, // SIN
         1, // COS
         3, // TERNARY
+        0, // SORT
         0, // DUP
         0, // SWAP
+        0, // DROP
     };
-    static_assert(sizeof(numOperands) == static_cast<unsigned>(ExprOpType::SWAP) + 1, "invalid table");
+    static_assert(sizeof(numOperands) == static_cast<unsigned>(ExprOpType::DROP) + 1, "invalid table");
 
     using namespace rr;
     std::vector<Value> stack;
@@ -690,6 +737,8 @@ void Compiler<lanes>::buildOneIter(const Helper &helpers, State &state)
             throw std::runtime_error("reference to undefined clip: " + tok);
         if ((op.type == ExprOpType::DUP || op.type == ExprOpType::SWAP) && op.imm.u >= stack.size())
             throw std::runtime_error("insufficient values on stack: " + tok);
+        if ((op.type == ExprOpType::DROP || op.type == ExprOpType::SORT) && op.imm.u > stack.size())
+            throw std::runtime_error("insufficient values on stack: " + tok);
         if (stack.size() < numOperands[static_cast<size_t>(op.type)])
             throw std::runtime_error("insufficient values on stack: " + tok);
 
@@ -702,6 +751,24 @@ void Compiler<lanes>::buildOneIter(const Helper &helpers, State &state)
             std::swap(stack[stack.size()-1], stack[stack.size() - 1 - op.imm.u]);
             break;
         }
+        case ExprOpType::DROP: {
+            for (unsigned i = 0; i < op.imm.u; i++)
+                stack.pop_back();
+            break;
+        }
+
+        case ExprOpType::SORT: {
+            // "3 7 1 2 0 4 6 5 sort8" -> "7 6 5 4 3 2 1 0"
+            auto at = [&stack](int i) -> Value& { return stack.at(stack.size() - 1 - i); };
+            const auto &sn = buildSortNet(op.imm.u);
+            for (auto cmp: sn) {
+                auto &a = at(cmp.first), &b = at(cmp.second);
+                Value min = a.Min(b), max = a.Max(b);
+                a = min, b = max;
+            }
+            break;
+        }
+
         case ExprOpType::MEM_LOAD: {
             Pointer<Byte> p = state.wptrs[op.imm.i + 1];
             const VSFormat *format = ctx.vi[op.imm.i]->format;

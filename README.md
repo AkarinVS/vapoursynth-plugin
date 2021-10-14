@@ -48,11 +48,14 @@ This works just like [`std.Expr`](http://www.vapoursynth.com/doc/functions/expr.
 - The `sin` operator. The implementation is reasonably accurate for input magnitude up to 1e5 (absolute error up to 2e-6). Do not pass input whose magnitude is larger than 2e5.
 - The `cos` operator. The implementation is reasonably accurate for input magnitude up to 1e5 (absolute error up to 2e-6). Do not pass input whose magnitude is larger than 2e5.
 - The `%` binary operator, which implements C `fmodf`, e.g. `trunc` can be implemented as `dup 1.0 % -`.
-- The `clip` and `clamp` operators, which clamps an input to be within a given bound. `x 16 235 clip` is equivalent to `x 16 max 235 min`.
+- (\*) The `clip` and `clamp` operators, which clamps an input to be within a given bound. `x 16 235 clip` is equivalent to `x 16 max 235 min`.
+- The `**` operator can be used as an alias for `pow`.
 - The `trunc` / `round` / `floor` operators that truncates/rounds/floors to integers.
 - (\*) Arbitrarily named temporary variables (modeled after [Forth](https://en.wikipedia.org/wiki/Forth_(programming_language)))
   - Pop a value and store to variable `var`: `var!`
   - Read a variable `var` and push onto stack: `var@`
+- (\*) `dropN` drops the top N items from the stack (N>=1, and defaults to 1). `1 2 drop` is equivalent to `1`.
+- (\*) `sortN` sorts the top N items on the stack (N>=1), after this operator, the top will be the smallest element.
 - (\*) Static relative pixel access (modeled after [AVS+ Expr](http://avisynth.nl/index.php/Expr#Pixel_addressing))
   - Use `x[relX,relY]` to access the pixel (relX, relY) relative to current coordinate, where -width < relX < width and -height < relY < height. Off screen pixels will be either cloned from the respective edge (clamped) or use the pixel mirror from the respective edge (mirrored). Both relX and relY should be constant.
   - Optionally, use `:m` or `:c` suffixes to specify mirrored and clamped boundary conditions, respectively.
@@ -72,12 +75,14 @@ Use this function to query the version and features of the plugin. It will retur
 ```python
 [
  b'x.property',  # frame property access
- b'sin', b'cos', b'%', b'clip', b'clamp', # operators
+ b'sin', b'cos', b'%', b'clip', b'clamp', b'**', # operators
  b'N', b'X', b'Y', b'pi', b'width', b'height', # constants
  b'trunc', b'round', b'floor',  # truncation, round and floor
  b'var@', b'var!', # temporary variable access
  b'x[x,y]',  # relative pixel access
  b'x[x,y]:m' # relative pixel access with mirrored boundary condition
+ b'drop', # dropN support
+ b'sort', # sortN support
 ]
 ```
 
