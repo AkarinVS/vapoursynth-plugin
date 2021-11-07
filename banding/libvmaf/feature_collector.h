@@ -19,7 +19,7 @@
 #ifndef __VMAF_FEATURE_COLLECTOR_H__
 #define __VMAF_FEATURE_COLLECTOR_H__
 
-#include <pthread.h>
+//#include <pthread.h>
 #include <stdbool.h>
 #include <time.h>
 
@@ -45,7 +45,7 @@ typedef struct VmafFeatureCollector {
     AggregateVector aggregate_vector;
     unsigned cnt, capacity;
     struct { clock_t begin, end; } timer;
-    pthread_mutex_t lock;
+    //pthread_mutex_t lock;
 } VmafFeatureCollector;
 
 int vmaf_feature_collector_init(VmafFeatureCollector **const feature_collector);

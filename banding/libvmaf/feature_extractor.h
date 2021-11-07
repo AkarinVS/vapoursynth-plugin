@@ -19,7 +19,7 @@
 #ifndef __VMAF_FEATURE_EXTRACTOR_H__
 #define __VMAF_FEATURE_EXTRACTOR_H__
 
-#include <stdatomic.h>
+//#include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
 
@@ -131,10 +131,10 @@ typedef struct VmafFeatureExtractorContextPool {
             bool in_use;
         } *ctx_list;
         atomic_int capacity, in_use;
-        pthread_cond_t full;
+        //pthread_cond_t full;
     } *fex_list;
     unsigned cnt, capacity;
-    pthread_mutex_t lock;
+    //pthread_mutex_t lock;
     unsigned n_threads;
 } VmafFeatureExtractorContextPool;
 

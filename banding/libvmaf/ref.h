@@ -19,7 +19,7 @@
 #ifndef __VMAF_SRC_REF_H__
 #define __VMAF_SRC_REF_H__
 
-#include <stdatomic.h>
+#include "stdatomic.h"
 
 typedef struct VmafRef {
     atomic_int cnt;
