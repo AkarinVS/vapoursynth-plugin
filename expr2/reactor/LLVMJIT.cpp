@@ -199,7 +199,11 @@ JITGlobals *JITGlobals::get()
 		                                            jitTargetMachineBuilder.getOptions().EmulatedTLS));
 
 		auto dataLayout = jitTargetMachineBuilder.getDefaultDataLayoutForTarget();
-		ASSERT_MSG(dataLayout, "JITTargetMachineBuilder::getDefaultDataLayoutForTarget() failed");
+		if (!dataLayout) {
+			llvm::errs() << "JITTargetMachineBuilder::getDefaultDataLayoutForTarget() failed: " <<
+				llvm::toString(dataLayout.takeError()) << '\n';
+			abort();
+		}
 
 		return JITGlobals(std::move(jitTargetMachineBuilder), std::move(dataLayout.get()));
 	}();
@@ -778,8 +782,11 @@ public:
 			// This is where the actual compilation happens.
 			auto symbol = session.lookup({ &dylib }, functionNames[i]);
 
-			ASSERT_MSG(symbol, "Failed to lookup address of routine function %d: %s",
-			           (int)i, llvm::toString(symbol.takeError()).c_str());
+			if (!symbol) {
+				llvm::errs() << "Failed to lookup address of routine function " << i << ": " <<
+					llvm::toString(symbol.takeError()) << '\n';
+				abort();
+			}
 
 			if(fatalCompileIssue)
 			{
