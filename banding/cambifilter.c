@@ -73,6 +73,7 @@ static const VSFrameRef *VS_CC cambiGetFrame(int n, int activationReason, void *
                 char name[16];
                 sprintf(name, "CAMBI_SCALE%d", i);
                 vsapi->propSetFrame(prop, name, f, paReplace);
+		vsapi->freeFrame(f);
             }
         }
         assert(err == 0);
