@@ -3,7 +3,7 @@ Plugin akarin
 
 CAMBI
 -----
-`akarin.CAMBI(clip clip[, int window_size = 63, float topk = 0.6, float tvi_threshold = 0.019, bint scores = False])`
+`akarin.Cambi(clip clip[, int window_size = 63, float topk = 0.6, float tvi_threshold = 0.019, bint scores = False])`
 
 Computes the CAMBI banding score as `CAMBI` frame property. Unlike [VapourSynth-VMAF](https://github.com/HomeOfVapourSynthEvolution/VapourSynth-VMAF), this filter is online (no need to batch process the whole video) and provides raw cambi scores (when `scores == True`).
 
