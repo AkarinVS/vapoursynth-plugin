@@ -105,3 +105,23 @@ When reporting issues, please also try limiting the ISA to a lower level (at lea
 
 2. The new LLVM based implementation (aka lexpr). Features labeled with (\*) is only available in this new implementation.
 If the `opt` argument is set to 1 (default 0), then it will activate an integer optimization mode, where intermediate values are computed with 32-bit integer for as long as possible. You have to make sure the intermediate value is always representable with int32 to use this optimization (as arithmetics will warp around in this mode.)
+
+
+Building
+--------
+To build the plugin, you will need LLVM 10-12 installed (on Windows, you need to build your own) and have llvm-config exectuable in your PATH, then run:
+```
+meson build
+ninja -C build install
+```
+
+Example LLVM build procedure:
+```
+git clone --depth 1 https://github.com/llvm/llvm-project.git --branch release/12.x
+cd llvm-project
+mkdir build
+cd build
+cmake ../llvm -DCMAKE_BUILD_TYPE=Release -DLLVM_ENABLE_PROJECTS="" -DLLVM_TARGETS_TO_BUILD=X86 -DLLVM_USE_CRT_RELEASE=MT
+cmake --build --config Release
+cmake --install ../install
+```
