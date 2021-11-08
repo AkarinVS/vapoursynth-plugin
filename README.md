@@ -115,13 +115,13 @@ meson build
 ninja -C build install
 ```
 
-Example LLVM build procedure:
+Example LLVM build procedure on windows:
 ```
 git clone --depth 1 https://github.com/llvm/llvm-project.git --branch release/12.x
 cd llvm-project
 mkdir build
 cd build
-cmake ../llvm -DCMAKE_BUILD_TYPE=Release -DLLVM_ENABLE_PROJECTS="" -DLLVM_TARGETS_TO_BUILD=X86 -DLLVM_USE_CRT_RELEASE=MT
+cmake -A x64 -Thost=x64 -DCMAKE_BUILD_TYPE=Release -DLLVM_ENABLE_PROJECTS="" -DLLVM_TARGETS_TO_BUILD=X86 -DLLVM_USE_CRT_RELEASE=MT ../llvm
 cmake --build --config Release
 cmake --install ../install
 ```
