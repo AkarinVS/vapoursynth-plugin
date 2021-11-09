@@ -13,6 +13,7 @@ typedef struct {
     VSNodeRef *node;
     VSVideoInfo vi;
     CambiState s;
+    int bpc;
     int scores;
 } CambiData;
 
@@ -34,7 +35,7 @@ static const VSFrameRef *VS_CC cambiGetFrame(int n, int activationReason, void *
 
         VmafPicture pic; // shares memory with src
         pic.pix_fmt = VMAF_PIX_FMT_YUV400P; // GRAY
-        pic.bpc = 8;
+        pic.bpc = d->bpc;
         pic.w[0] = width;
         pic.h[0] = height;
         pic.stride[0] = vsapi->getStride(src, 0);
@@ -73,7 +74,7 @@ static const VSFrameRef *VS_CC cambiGetFrame(int n, int activationReason, void *
                 char name[16];
                 sprintf(name, "CAMBI_SCALE%d", i);
                 vsapi->propSetFrame(prop, name, f, paReplace);
-		vsapi->freeFrame(f);
+                vsapi->freeFrame(f);
             }
         }
         assert(err == 0);
@@ -101,11 +102,14 @@ static void VS_CC cambiCreate(const VSMap *in, VSMap *out, void *userData, VSCor
     d.node = vsapi->propGetNode(in, "clip", 0, 0);
     d.vi = *vsapi->getVideoInfo(d.node);
 
-    if (!isConstantFormat(&d.vi) || d.vi.format->sampleType != stInteger || d.vi.format->bitsPerSample != 8) {
-        vsapi->setError(out, "Cambi: only constant format with 8bit integer samples supported");
+    if (!isConstantFormat(&d.vi) || d.vi.format->sampleType != stInteger ||
+        (d.vi.format->colorFamily != cmGray && d.vi.format->colorFamily != cmYUV) ||
+        (d.vi.format->bitsPerSample != 8 && d.vi.format->bitsPerSample != 10)) {
+        vsapi->setError(out, "Cambi: only constant Gray/YUV format with 8/10bit integer samples supported");
         vsapi->freeNode(d.node);
         return;
     }
+    d.bpc = d.vi.format->bitsPerSample;
 
     cambi_config(&d.s);
 #define GETARG(type, var, name, api, min, max) \

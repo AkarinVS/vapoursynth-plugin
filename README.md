@@ -7,7 +7,7 @@ CAMBI
 
 Computes the CAMBI banding score as `CAMBI` frame property. Unlike [VapourSynth-VMAF](https://github.com/HomeOfVapourSynthEvolution/VapourSynth-VMAF), this filter is online (no need to batch process the whole video) and provides raw cambi scores (when `scores == True`).
 
-- `clip`: Clip to calculate CAMBI score. Only YUV format with integer sample type of 8 bit depth and chroma subsampling of 420/422/444 is supported.
+- `clip`: Clip to calculate CAMBI score. Only Gray/YUV format with integer sample type of 8/10-bit depth (subsampling can be arbitrary as cambi only uses the Y channel.)
 - `window_size` (min: 15, max: 127, default: 63): Window size to compute CAMBI. (default: 63 corresponds to ~1 degree at 4K resolution and 1.5H)
 - `topk` (min: 0.0001, max: 1.0, default: 0.6): Ratio of pixels for the spatial pooling computation.
 - `tvi_threshold` (min: 0.0001, max: 1.0, default: 0.019): Visibilty threshold for luminance `ΔL < tvi_threshold*L_mean` for BT.1886.
