@@ -131,6 +131,7 @@ static void VS_CC cambiCreate(const VSMap *in, VSMap *out, void *userData, VSCor
     GETARG(double, d.s, tvi_threshold, propGetFloat, 0.0001, 1);
     d.scores = 0;
     GETARG(int, d, scores, propGetInt, 0, 1);
+#undef GETARG
 
     int err = cambi_init(&d.s, d.vi.width, d.vi.height);
     if (err != 0) {
