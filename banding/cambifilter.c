@@ -59,7 +59,6 @@ static const VSFrameRef *VS_CC cambiGetFrame(int n, int activationReason, void *
         }
         err = cambi_extract(&s, &pic, &score, d->scores ? c_values : NULL);
         cambi_close(&s);
-        vsapi->freeFrame(src);
 
         VSMap *prop = vsapi->getFramePropsRW(dst);
         if (d->scores) {
@@ -85,6 +84,7 @@ static const VSFrameRef *VS_CC cambiGetFrame(int n, int activationReason, void *
                 vsapi->freeFrame(f);
             }
         }
+        vsapi->freeFrame(src);
         assert(err == 0);
 
         err = vsapi->propSetFloat(prop, "CAMBI", score, paReplace);
