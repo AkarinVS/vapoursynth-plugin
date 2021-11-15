@@ -15,6 +15,7 @@ typedef struct {
     CambiState s;
     int bpc;
     int scores;
+    float scaling;
 } CambiData;
 
 static void VS_CC cambiInit(VSMap *in, VSMap *out, void **instanceData, VSNode *node, VSCore *core, const VSAPI *vsapi) {
@@ -66,8 +67,15 @@ static const VSFrameRef *VS_CC cambiGetFrame(int n, int activationReason, void *
             unsigned int w = width, h = height;
             for (int i = 0; i < NUM_SCALES; i++) {
                 VSFrameRef *f = vsapi->newVideoFrame(grays, w, h, src, core);
-                const int row_size = w * sizeof(float);
-                vs_bitblt(vsapi->getWritePtr(f, 0), vsapi->getStride(f, 0), c_values[i], row_size, row_size, h);
+                float *dst = (float *)vsapi->getWritePtr(f, 0);
+                float *src = c_values[i];
+                uintptr_t stride = vsapi->getStride(f, 0) / sizeof *dst;
+                for (int y = 0; y < h; y++) {
+                        for (int x = 0; x < w; x++)
+                                dst[x] = src[x] * d->scaling;
+                        src += w;
+                        dst += stride;
+                }
                 free(c_values[i]);
                 scale_dimension(&w, 1);
                 scale_dimension(&h, 1);
@@ -131,6 +139,8 @@ static void VS_CC cambiCreate(const VSMap *in, VSMap *out, void *userData, VSCor
     GETARG(double, d.s, tvi_threshold, propGetFloat, 0.0001, 1);
     d.scores = 0;
     GETARG(int, d, scores, propGetInt, 0, 1);
+    d.scaling = 1.0f / d.s.window_size;
+    GETARG(int, d, scaling, propGetFloat, 0, 1);
 #undef GETARG
 
     int err = cambi_init(&d.s, d.vi.width, d.vi.height);
@@ -147,5 +157,5 @@ static void VS_CC cambiCreate(const VSMap *in, VSMap *out, void *userData, VSCor
 }
 
 void bandingInitialize(VSConfigPlugin configFunc, VSRegisterFunction registerFunc, VSPlugin *plugin) {
-    registerFunc("Cambi", "clip:clip;window_size:int:opt;topk:float:opt;tvi_threshold:float:opt;scores:int:opt;", cambiCreate, 0, plugin);
+    registerFunc("Cambi", "clip:clip;window_size:int:opt;topk:float:opt;tvi_threshold:float:opt;scores:int:opt;scaling:float:opt;", cambiCreate, 0, plugin);
 }

@@ -3,7 +3,7 @@ Plugin akarin
 
 CAMBI
 -----
-`akarin.Cambi(clip clip[, int window_size = 63, float topk = 0.6, float tvi_threshold = 0.019, bint scores = False])`
+`akarin.Cambi(clip clip[, int window_size = 63, float topk = 0.6, float tvi_threshold = 0.019, bint scores = False, float scaling = 1.0/window_size])`
 
 Computes the CAMBI banding score as `CAMBI` frame property. Unlike [VapourSynth-VMAF](https://github.com/HomeOfVapourSynthEvolution/VapourSynth-VMAF), this filter is online (no need to batch process the whole video) and provides raw cambi scores (when `scores == True`).
 
@@ -12,6 +12,7 @@ Computes the CAMBI banding score as `CAMBI` frame property. Unlike [VapourSynth-
 - `topk` (min: 0.0001, max: 1.0, default: 0.6): Ratio of pixels for the spatial pooling computation.
 - `tvi_threshold` (min: 0.0001, max: 1.0, default: 0.019): Visibilty threshold for luminance `ΔL < tvi_threshold*L_mean` for BT.1886.
 - `scores` (default: False): if True, for scale i (0 <= i < 5), the GRAYS c-score frame will be stored as frame property `"CAMBI_SCALE%d" % i`.
+- `scaling`: scaling factor used to normalize the c-scores for each scale returned when `scores=True`.
 
 DLVFX
 -----
