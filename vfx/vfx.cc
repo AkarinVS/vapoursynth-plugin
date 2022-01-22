@@ -179,6 +179,11 @@ static void VS_CC vfxFree(void *instanceData, VSCore *core, const VSAPI *vsapi) 
 }
 
 static void VS_CC vfxCreate(const VSMap *in, VSMap *out, void *userData, VSCore *core, const VSAPI *vsapi) {
+    unsigned int version = 0;
+    if (NvVFX_GetVersion(&version) != NVCV_SUCCESS) {
+            vsapi->setError(out, "DLVFX: unable to load NvVFX.");
+            return;
+    }
     int err;
     auto num_streams = int64ToIntS(vsapi->propGetInt(in, "num_streams", 0, &err));
     if (err) num_streams = 1;
@@ -333,7 +338,5 @@ void VS_CC vfxInitialize(VSConfigPlugin configFunc, VSRegisterFunction registerF
 VS_EXTERNAL_API(void) VapourSynthPluginInit(VSConfigPlugin configFunc, VSRegisterFunction registerFunc, VSPlugin *plugin) {
     configFunc("info.akarin.plugin", "akarin2", "Experimental Nvidia Maxine plugin", VAPOURSYNTH_API_VERSION, 1, plugin);
 #endif
-    unsigned int version = 0;
-    if (NvVFX_GetVersion(&version) == NVCV_SUCCESS)
-        registerFunc("DLVFX", "clip:clip;op:int;scale:float:opt;strength:float:opt;output_depth:int:opt;num_streams:int:opt", vfxCreate, nullptr, plugin);
+    registerFunc("DLVFX", "clip:clip;op:int;scale:float:opt;strength:float:opt;output_depth:int:opt;num_streams:int:opt", vfxCreate, nullptr, plugin);
 }
