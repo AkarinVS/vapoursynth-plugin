@@ -712,8 +712,7 @@ public:
 	    size_t count,
 	    const rr::Config &config)
 	    : name(name)
-	    , objectLayer(session, []() {
-		    static MemoryMapper memoryMapper;
+	    , objectLayer(session, [this]() {
 		    return std::make_unique<llvm::SectionMemoryManager>(&memoryMapper);
 	    })
 	    , addresses(count)
@@ -821,6 +820,7 @@ public:
 private:
 	std::string name;
 	llvm::orc::ExecutionSession session;
+	MemoryMapper memoryMapper;
 	llvm::orc::RTDyldObjectLinkingLayer objectLayer;
 	std::vector<const void *> addresses;
 };
