@@ -17,9 +17,7 @@
 * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 */
 
-#ifndef _WIN32
-#define USE_EXPR_CACHE // crash at dll unload time on Windows
-#endif
+#define USE_EXPR_CACHE
 
 #include <algorithm>
 #include <cmath>
