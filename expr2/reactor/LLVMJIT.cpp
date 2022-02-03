@@ -152,7 +152,15 @@ JITGlobals *JITGlobals::get()
 #if defined(__i386__) || defined(__x86_64__)
 			"-x86-asm-syntax=intel",  // Use Intel syntax rather than the default AT&T
 #endif
+#if LLVM_VERSION_MAJOR <= 12
 			"-warn-stack-size=524288"  // Warn when a function uses more than 512 KiB of stack memory
+#else
+		// TODO(b/191193823): TODO(ndesaulniers): Update this after
+		// go/compilers/fc018ebb608ee0c1239b405460e49f1835ab6175
+#	if LLVM_VERSION_MAJOR < 9999
+#		warning Implement stack size checks using the "warn-stack-size" function attribute.
+#	endif
+#endif
 		};
 
 		parseCommandLineOptionsOnce(sizeof(argv) / sizeof(argv[0]), argv);
@@ -712,6 +720,13 @@ public:
 	    size_t count,
 	    const rr::Config &config)
 	    : name(name)
+#if LLVM_VERSION_MAJOR >= 13
+	    , session([]() -> std::unique_ptr<llvm::orc::SelfExecutorProcessControl> {
+		    auto p = llvm::orc::SelfExecutorProcessControl::Create();
+		    if (!p) abort(); // shouldn't fail
+		    return std::move(*p);
+	    }())
+#endif
 	    , objectLayer(session, [this]() {
 		    return std::make_unique<llvm::SectionMemoryManager>(&memoryMapper);
 	    })
