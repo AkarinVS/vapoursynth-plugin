@@ -223,6 +223,7 @@ ExprOp decodeToken(const std::string &token)
         { "exp",  { ExprOpType::EXP } },
         { "log",  { ExprOpType::LOG } },
         { "pow",  { ExprOpType::POW } },
+        { "**",   { ExprOpType::POW } },
         { "sin",  { ExprOpType::SIN } },
         { "cos",  { ExprOpType::COS } },
         { "dup",  { ExprOpType::DUP, 0 } },
