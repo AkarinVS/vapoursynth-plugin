@@ -1,0 +1,2 @@
+option('static-llvm', type: 'boolean', value: true,
+       description: 'Whether to statically link LLVM')
