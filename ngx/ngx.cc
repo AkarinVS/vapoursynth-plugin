@@ -97,11 +97,11 @@ struct NgxData {
     NgxData() : node(nullptr), vi(), scale(0), param(nullptr), DUHandle(nullptr), ctx(nullptr), inp(nullptr), outp(nullptr) {}
     ~NgxData() {
         if (ctx) {
-            CK_CUDA(cuCtxPushCurrent(ctx));
+            CK_CUDA(cuCtxPushCurrent_v2(ctx));
             if (inp) CK_CUDA(cuMemFree_v2(inp));
             if (outp) CK_CUDA(cuMemFree_v2(outp));
             if (DUHandle) CK_NGX(NVSDK_NGX_CUDA_ReleaseFeature(DUHandle));
-            cuCtxPopCurrent(nullptr);
+            cuCtxPopCurrent_v2(nullptr);
         }
     }
 };
@@ -128,7 +128,7 @@ static const VSFrameRef *VS_CC ngxGetFrame(int n, int activationReason, void **i
 
         // The NGX API is not thread safe.
         std::lock_guard<std::mutex> lock(d->lock);
-        CK_CUDA(cuCtxPushCurrent(d->ctx));
+        CK_CUDA(cuCtxPushCurrent_v2(d->ctx));
 
         auto params = d->param;
         params->Set(NVSDK_NGX_Parameter_Width, (uint64_t)d->in_image_width());
@@ -175,7 +175,7 @@ static const VSFrameRef *VS_CC ngxGetFrame(int n, int activationReason, void **i
                     *(T*)&ptr[i * stride + j * sizeof(T)] = *(T*)&host[i * d->out_image_row_bytes() + j * d->pixel_size() + plane * sizeof(T)] / factor;
         }
 
-        cuCtxPopCurrent(nullptr);
+        cuCtxPopCurrent_v2(nullptr);
 
         vsapi->freeFrame(src);
         return dst;
@@ -272,7 +272,7 @@ static void VS_CC ngxCreate(const VSMap *in, VSMap *out, void *userData, VSCore 
     CK_NGX(NVSDK_NGX_CUDA_CreateFeature(NVSDK_NGX_Feature_ImageSuperResolution, d->param, &d->DUHandle));
     CK_CUDA(cuCtxGetCurrent(&d->ctx));
     d->allocate();
-    CK_CUDA(cuCtxPopCurrent(nullptr));
+    CK_CUDA(cuCtxPopCurrent_v2(nullptr));
 
     vsapi->createFilter(in, out, "DLISR", ngxInit, ngxGetFrame, ngxFree, fmParallel, 0, d.release(), core);
 }
