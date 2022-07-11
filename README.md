@@ -75,6 +75,7 @@ This works just like [`std.Expr`](http://www.vapoursynth.com/doc/functions/expr.
   - The `boundary` argument specifies the default boundary condition for all relative pixel accesses without explicit specification:
     - 0 means clamped
     - 1 means mirrored
+- (\*) Dynamic pixel access using absolute coordinates. Use `absX absY x[]` to access the pixel (absX, absY) in the current frame of clip x. absX and absY can be computed using arbitrary expressions, and they are clamped to be within their respecitive ranges (i.e. boundary pixels are repeated indefinitely.) Only use this as a last resort as the performance is likely worse than static relative pixel access, depending on access pattern.
 - Support more bases for constants
   - hexadecimals: 0x123 or 0x123.4p5
   - octals: 023 (however, invalid octal numbers will be parsed as floating points, so "09" will be parsed the same as "9.0")
@@ -96,6 +97,7 @@ Use this function to query the version and features of the plugin. It will retur
  b'x[x,y]:m' # relative pixel access with mirrored boundary condition
  b'drop', # dropN support
  b'sort', # sortN support
+ b'x[]',  # dynamic pixel access
 ]
 ```
 

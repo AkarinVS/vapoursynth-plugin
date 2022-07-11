@@ -51,7 +51,8 @@ namespace {
 
 enum class ExprOpType {
     // Terminals.
-    MEM_LOAD, CONSTANTI, CONSTANTF, CONST_LOAD,
+    MEM_LOAD, MEM_LOAD_VAR,
+    CONSTANTI, CONSTANTF, CONST_LOAD,
     VAR_LOAD, VAR_STORE,
 
     // Arithmetic primitives.
@@ -79,13 +80,14 @@ enum class ExprOpType {
 std::vector<std::string> features = {
     "x.property",
     "sin", "cos",
-    "%", "clip", "clamp",
+    "%", "clip", "clamp", "**",
     "N", "X", "Y", "pi", "width", "height",
     "trunc", "round", "floor",
     "var@", "var!",
     "x[x,y]", "x[x,y]:m",
     "drop",
     "sort",
+    "x[]",
 };
 
 enum class ComparisonType {
@@ -237,6 +239,7 @@ ExprOp decodeToken(const std::string &token)
         {"height",{ ExprOpType::CONST_LOAD, static_cast<int>(LoadConstType::Height) } },
     };
     static const std::regex relpixelRe { "^([a-z])\\[(-?[0-9]+),(-?[0-9]+)\\](:[cm])?$" };
+    static const std::regex abspixelRe { "^([a-z])\\[\\]$" };
     std::smatch match;
 
     auto it = simple.find(token);
@@ -279,6 +282,10 @@ ExprOp decodeToken(const std::string &token)
         BoundaryCondition bc = flag.size() == 0 ? BoundaryCondition::Unspecified :
             (flag[1] == 'm' ? BoundaryCondition::Mirrored : BoundaryCondition::Clamped);
         return{ ExprOpType::MEM_LOAD, clip[0] >= 'x' ? clip[0] - 'x' : clip[0] - 'a' + 3, "", atoi(sx.c_str()), atoi(sy.c_str()), bc };
+    } else if (std::regex_match(token, match, abspixelRe)) {
+        ASSERT(match.size() == 2);
+        auto clip = match[1].str();
+        return{ ExprOpType::MEM_LOAD_VAR, clip[0] >= 'x' ? clip[0] - 'x' : clip[0] - 'a' + 3 };
     } else {
         size_t pos = 0;
         long long l = 0;
@@ -428,6 +435,7 @@ class Compiler {
         IntV i() { return std::get<IntV>(v); }
 
         FloatV ensureFloat() { return isFloat() ? f() : FloatV(i()); }
+        IntV ensureInt() { return isFloat() ? IntV(RoundInt(f())) : i(); }
 
         Value Max(Value &rhs) { return (isFloat() || rhs.isFloat()) ? Value(rr::Max(f(), rhs.f())) : Value(rr::Max(i(), rhs.i())); }
         Value Min(Value &rhs) { return (isFloat() || rhs.isFloat()) ? Value(rr::Min(f(), rhs.f())) : Value(rr::Min(i(), rhs.i())); }
@@ -688,6 +696,7 @@ void Compiler<lanes>::buildOneIter(const Helper &helpers, State &state)
 {
     constexpr unsigned char numOperands[] = {
         0, // MEM_LOAD
+        2, // MEM_LOAD_VAR
         0, // CONSTANTI
         0, // CONSTANTF
         0, // CONST_LOAD
@@ -816,7 +825,7 @@ void Compiler<lanes>::buildOneIter(const Helper &helpers, State &state)
                     if (regularLoad)
                         v = IntV(*Pointer<IntV>(p, (unaligned ? 1:lanes)*sizeof(uint32_t)));
                     else
-                        v = IntV(Gather(Pointer<Int>(p), offsets, IntV(~0), sizeof(uint16_t)));
+                        v = IntV(Gather(Pointer<Int>(p), offsets, IntV(~0), sizeof(uint32_t)));
                 }
                 v = relativeAccessAdjust<lanes>(x, state.x, state.width, op, v);
                 if (ctx.forceFloat())
@@ -918,6 +927,39 @@ void Compiler<lanes>::buildOneIter(const Helper &helpers, State &state)
             auto x = op(li, ri); \
             OUT(x & IntV(1)); \
             break; \
+        }
+
+        case ExprOpType::MEM_LOAD_VAR: {
+            LOAD2(absx_, absy_);
+
+            const VSFormat *format = ctx.vi[op.imm.i]->format;
+            Pointer<Byte> p = state.wptrs[op.imm.i + 1];
+            IntV stride = state.strides[op.imm.i + 1], size = format->bytesPerSample;
+            IntV absx = Min(Max(absx_.ensureInt(), IntV(0)), IntV(state.width-1));
+            IntV absy = Min(Max(absy_.ensureInt(), IntV(0)), IntV(state.height-1));
+            IntV offsets = absy * stride + absx * size;
+
+            if (format->sampleType == stInteger) {
+                IntV v;
+                if (format->bytesPerSample == 1)
+                    v = IntV(Gather(Pointer<Byte>(p), offsets, IntV(~0), sizeof(uint8_t)));
+                else if (format->bytesPerSample == 2)
+                    v = IntV(Gather(Pointer<UShort>(p), offsets, IntV(~0), sizeof(uint16_t)));
+                else if (format->bytesPerSample == 4)
+                    v = IntV(Gather(Pointer<Int>(p), offsets, IntV(~0), sizeof(uint32_t)));
+                if (ctx.forceFloat())
+                    OUT(FloatV(v));
+                else
+                    OUT(v);
+            } else if (format->sampleType == stFloat) {
+                FloatV v;
+                if (format->bytesPerSample == 2)
+                    abort(); // XXX: f16 not supported
+                else if (format->bytesPerSample == 4)
+                    v = Gather(Pointer<Float>(p), offsets, IntV(~0), sizeof(float));
+                OUT(v);
+            }
+            break;
         }
 
         case ExprOpType::VAR_LOAD:
