@@ -64,6 +64,9 @@ enum class ExprOpType {
     // Logical operators.
     AND, OR, XOR, NOT,
 
+    // Bitwise operators.
+    BITAND, BITOR, BITXOR, BITNOT,
+
     // Transcendental functions.
     EXP, LOG, POW, SIN, COS,
 
@@ -88,6 +91,7 @@ std::vector<std::string> features = {
     "drop",
     "sort",
     "x[]",
+    "bitand", "bitor", "bitxor", "bitnot",
 };
 
 enum class ComparisonType {
@@ -221,6 +225,10 @@ ExprOp decodeToken(const std::string &token)
         { "or",   { ExprOpType::OR } },
         { "xor",  { ExprOpType::XOR } },
         { "not",  { ExprOpType::NOT } },
+        { "bitand", { ExprOpType::BITAND } },
+        { "bitor",  { ExprOpType::BITOR } },
+        { "bitxor", { ExprOpType::BITXOR } },
+        { "bitnot", { ExprOpType::BITNOT } },
         { "?",    { ExprOpType::TERNARY } },
         { "exp",  { ExprOpType::EXP } },
         { "log",  { ExprOpType::LOG } },
@@ -720,6 +728,10 @@ void Compiler<lanes>::buildOneIter(const Helper &helpers, State &state)
         2, // OR
         2, // XOR
         1, // NOT
+        2, // BITAND
+        2, // BITOR
+        2, // BITXOR
+        1, // BITNOT
         1, // EXP
         1, // LOG
         2, // POW
@@ -1026,6 +1038,24 @@ void Compiler<lanes>::buildOneIter(const Helper &helpers, State &state)
             break;
         }
 
+#define BITWISEOP(op) { \
+            LOAD2(l, r); \
+            IntV li = l.ensureInt(); \
+            IntV ri = r.ensureInt(); \
+            auto x = op(li, ri); \
+            OUT(x); \
+            break; \
+        }
+        case ExprOpType::BITAND: BITWISEOP(operator &);
+        case ExprOpType::BITOR: BITWISEOP(operator |);
+        case ExprOpType::BITXOR: BITWISEOP(operator ^);
+        case ExprOpType::BITNOT: {
+            LOAD1(x);
+            IntV xi = x.ensureInt();
+            OUT(~xi);
+            break;
+        }
+
         case ExprOpType::TRUNC: UNARYOPF(Trunc);
         case ExprOpType::ROUND: UNARYOPF(Round);
         case ExprOpType::FLOOR: UNARYOPF(Floor);
@@ -1058,6 +1088,7 @@ void Compiler<lanes>::buildOneIter(const Helper &helpers, State &state)
                 OUT((t.i() & ci) | (f.i() & ~ci));
             break;
         }
+#undef BITWISEOP
 #undef LOGICOP
 #undef UNARYOP
 #undef BINARYOP
