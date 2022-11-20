@@ -1627,6 +1627,7 @@ float interpret(const std::vector<ExprOp> &ops, int N, int width, int height, in
         case ExprOpType::MUL: BINARYOP(*);
         case ExprOpType::DIV: BINARYOP(/);
         case ExprOpType::MOD: {
+            check_stack(2);
             LOAD2(l, r);
             OUT(std::fmod(l, r));
             break;
@@ -1636,12 +1637,14 @@ float interpret(const std::vector<ExprOp> &ops, int N, int width, int height, in
         case ExprOpType::MAX: BINARYOPF(std::max);
         case ExprOpType::MIN: BINARYOPF(std::min);
         case ExprOpType::CLAMP: {
+            check_stack(3);
             LOAD2(min, max);
             LOAD1(x);
             OUT(std::max(std::min(x, max), min));
             break;
         }
         case ExprOpType::CMP: {
+            check_stack(2);
             LOAD2(l, r);
             int x;
             switch (static_cast<ComparisonType>(op.imm.u)) {
