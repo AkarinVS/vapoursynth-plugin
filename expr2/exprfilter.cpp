@@ -26,6 +26,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <numeric>
 #include <regex>
 #include <set>
 #include <string>
@@ -78,6 +79,11 @@ enum class ExprOpType {
 
     // Stack helpers.
     DUP, SWAP, DROP,
+
+    LAST = DROP, // last one supported by Expr.
+
+    // Extended operator for Select only.
+    ARGMIN, ARGMAX, ARGSORT,
 };
 
 std::vector<std::string> features = {
@@ -92,6 +98,20 @@ std::vector<std::string> features = {
     "sort",
     "x[]",
     "bitand", "bitor", "bitxor", "bitnot",
+};
+
+std::vector<std::string> selectFeatures = {
+    "x.property",
+    "sin", "cos",
+    "%", "clip", "clamp", "**",
+    "N", "pi", "width", "height",
+    "trunc", "round", "floor",
+    "var@", "var!",
+    "drop",
+    "sort",
+    "bitand", "bitor", "bitxor", "bitnot",
+    // extended features only available for Select.
+    "argmin", "argmax", "argsort",
 };
 
 enum class ComparisonType {
@@ -199,7 +219,7 @@ std::vector<std::string> tokenize(const std::string &expr)
     return tokens;
 }
 
-ExprOp decodeToken(const std::string &token)
+ExprOp decodeToken(const std::string &token, bool extended = false)
 {
     static const std::unordered_map<std::string, ExprOp> simple{
         { "+",    { ExprOpType::ADD } },
@@ -278,6 +298,26 @@ ExprOp decodeToken(const std::string &token)
             return{ ExprOpType::DROP, idx };
         else //if (token[1] == 'o')
             return{ ExprOpType::SORT, idx };
+    } else if (extended && (token.substr(0, 6) == "argmin" || token.substr(0, 6) == "argmax" ||
+                            token.substr(0, 7) == "argsort")) {
+        size_t prefix = token[3] == 's' ? 7 : 6;
+        size_t count = 0;
+        int idx = -1;
+
+        try {
+            idx = std::stoi(token.substr(prefix), &count);
+        } catch (...) {
+            // ...
+        }
+
+        if (idx < 0 || prefix + count != token.size())
+            throw std::runtime_error("illegal token: " + token);
+        if (token[3] == 's')
+            return{ ExprOpType::ARGSORT, idx };
+        else if (token[4] == 'i')
+            return{ ExprOpType::ARGMIN, idx };
+        else //if (token[4] == 'a')
+            return{ ExprOpType::ARGMAX, idx };
     } else if (token.size() >= 2 && (token.back() == '@' || token.back() == '!')) {
         // 'name@' load variable; 'name!' store to variable.
         return{ token.back() == '@' ? ExprOpType::VAR_LOAD : ExprOpType::VAR_STORE, -1, token.substr(0, token.size()-1) };
@@ -743,7 +783,7 @@ void Compiler<lanes>::buildOneIter(const Helper &helpers, State &state)
         0, // SWAP
         0, // DROP
     };
-    static_assert(sizeof(numOperands) == static_cast<unsigned>(ExprOpType::DROP) + 1, "invalid table");
+    static_assert(sizeof(numOperands) == static_cast<unsigned>(ExprOpType::LAST) + 1, "invalid table");
 
     using namespace rr;
     std::vector<Value> stack;
@@ -1090,11 +1130,20 @@ void Compiler<lanes>::buildOneIter(const Helper &helpers, State &state)
         }
 #undef BITWISEOP
 #undef LOGICOP
+#undef UNARYOPF
 #undef UNARYOP
+#undef BINARYOPF
 #undef BINARYOP
 #undef OUT
 #undef LOAD2
 #undef LOAD1
+
+        // Unsupported operators, shouldn't happen
+        case ExprOpType::ARGMIN:
+        case ExprOpType::ARGMAX:
+        case ExprOpType::ARGSORT:
+            assert(0 && "shouldn't happen");
+            break;
         } // switch
     }
 
@@ -1472,12 +1521,452 @@ static void initExpr() {
     rr::Nucleus::adjustDefaultConfig(cfg);
 }
 
+// An interpreter for expr.
+float interpret(const std::vector<ExprOp> &ops, int N, int width, int height, int Y, int X, std::function<float(const ExprOp &op, int y, int x)> pixelGet, std::function<float(int idx, const std::string &name)> propGet, std::vector<float> *rstk = nullptr) {
+    std::vector<float> stack;
+    std::map<std::string, float> vars;
+    auto check_stack = [&stack](int nargs) -> void {
+        int size = stack.size();
+        if (size < nargs)
+            throw std::runtime_error("stack underflow, expecting " + std::to_string(nargs) + " args, but only has " + std::to_string(size) + " elements left on stack");
+    };
+
+    for (const auto &op: ops) {
+        // Stack operations
+        switch (op.type) {
+        case ExprOpType::DUP:
+            check_stack(op.imm.u);
+            stack.push_back(stack[stack.size() - 1 - op.imm.u]);
+            break;
+        case ExprOpType::SWAP: {
+            check_stack(op.imm.u);
+            std::swap(stack[stack.size()-1], stack[stack.size() - 1 - op.imm.u]);
+            break;
+        }
+        case ExprOpType::DROP: {
+            check_stack(op.imm.u);
+            for (unsigned i = 0; i < op.imm.u; i++)
+                stack.pop_back();
+            break;
+        }
+
+#define OUT(x) stack.push_back(x)
+#define LOAD1(x) float x = stack.back(); stack.pop_back()
+#define LOAD2(l, r) \
+           LOAD1(r); \
+           LOAD1(l)
+        // Terminals
+        case ExprOpType::MEM_LOAD:
+        case ExprOpType::MEM_LOAD_VAR:
+            OUT(pixelGet(op, Y, X));
+            break;
+
+        case ExprOpType::CONSTANTI:
+            OUT(op.imm.i);
+            break;
+        case ExprOpType::CONSTANTF:
+            OUT(op.imm.f);
+            break;
+        case ExprOpType::CONST_LOAD: {
+            switch (static_cast<LoadConstType>(op.imm.i)) {
+            case LoadConstType::N:
+                OUT(N);
+                break;
+            case LoadConstType::Y:
+                OUT(Y);
+                break;
+            case LoadConstType::X:
+                OUT(X);
+                break;
+            case LoadConstType::Width:
+                OUT(width);
+                break;
+            case LoadConstType::Height:
+                OUT(height);
+                break;
+            default:
+                OUT(propGet(op.imm.i - static_cast<int>(LoadConstType::LAST), op.name));
+                break;
+            }
+            break;
+        }
+        case ExprOpType::VAR_LOAD: {
+            auto it = vars.find(op.name);
+            if (it == vars.end())
+                throw std::runtime_error("variable " + op.name + " used before assignment");
+            OUT(it->second);
+            break;
+        }
+        case ExprOpType::VAR_STORE: {
+            LOAD1(v);
+            vars.insert_or_assign(op.name, v);
+            break;
+        }
+
+        // Arithmetic primitives.
+#define BINARYOP(op) { \
+            check_stack(2); \
+            LOAD2(l, r); \
+            OUT((l) op (r)); \
+            break; \
+        }
+#define BINARYOPF(op) { \
+            check_stack(2); \
+            LOAD2(l, r); \
+            OUT(op(l, r)); \
+            break; \
+        }
+#define UNARYOP(op) { \
+            check_stack(1); \
+            LOAD1(x); \
+            OUT(op (x)); \
+            break; \
+        }
+        case ExprOpType::ADD: BINARYOP(+);
+        case ExprOpType::SUB: BINARYOP(-);
+        case ExprOpType::MUL: BINARYOP(*);
+        case ExprOpType::DIV: BINARYOP(/);
+        case ExprOpType::MOD: {
+            LOAD2(l, r);
+            OUT(std::fmod(l, r));
+            break;
+        }
+        case ExprOpType::SQRT: UNARYOP([](float x) -> float { return std::sqrt(std::max(x, 0.0f)); });
+        case ExprOpType::ABS: UNARYOP(std::abs);
+        case ExprOpType::MAX: BINARYOPF(std::max);
+        case ExprOpType::MIN: BINARYOPF(std::min);
+        case ExprOpType::CLAMP: {
+            LOAD2(min, max);
+            LOAD1(x);
+            OUT(std::max(std::min(x, max), min));
+            break;
+        }
+        case ExprOpType::CMP: {
+            LOAD2(l, r);
+            int x;
+            switch (static_cast<ComparisonType>(op.imm.u)) {
+            case ComparisonType::EQ:  x = (l) == (r); break;
+            case ComparisonType::LT:  x = (l)  < (r); break;
+            case ComparisonType::LE:  x = (l) <= (r); break;
+            case ComparisonType::NEQ: x = (l) != (r); break;
+            case ComparisonType::NLT: x = (l) >= (r); break;
+            case ComparisonType::NLE: x = (l)  > (r); break;
+            }
+            OUT(x);
+            break;
+        }
+
+        // Integer conversions.
+        case ExprOpType::TRUNC: UNARYOP(std::trunc);
+        case ExprOpType::ROUND: UNARYOP(std::round);
+        case ExprOpType::FLOOR: UNARYOP(std::floor);
+
+
+        // Logical operators.
+#define LOGICOP(op) { \
+            check_stack(2); \
+            LOAD2(l, r); \
+            bool lb = l > 0.0f, rb = r > 0.0f; \
+            int x = (lb) op (rb); \
+            OUT(x); \
+            break; \
+        }
+        case ExprOpType::AND: LOGICOP(&);
+        case ExprOpType::OR: LOGICOP(|);
+        case ExprOpType::XOR: LOGICOP(^);
+        case ExprOpType::NOT: {
+            check_stack(1); \
+            LOAD1(x);
+            OUT(x <= 0.0f);
+            break;
+        }
+#undef LOGICOP
+
+        // Bitwise operators.
+#define BITWISEOP(op) { \
+            check_stack(2); \
+            LOAD2(l, r); \
+            int li = (int)std::round(l); \
+            int ri = (int)std::round(r); \
+            auto x = (li) op (ri); \
+            OUT(x); \
+            break; \
+        }
+        case ExprOpType::BITAND: BITWISEOP(&);
+        case ExprOpType::BITOR: BITWISEOP(|);
+        case ExprOpType::BITXOR: BITWISEOP(^);
+        case ExprOpType::BITNOT: {
+            check_stack(1);
+            LOAD1(x);
+            int xi = int(std::round(x));
+            OUT(~xi);
+            break;
+        }
+#undef BITWISEOP
+
+        // Transcendental functions.
+        case ExprOpType::EXP: UNARYOP(std::exp);
+        case ExprOpType::LOG: UNARYOP(std::log);
+        case ExprOpType::POW: BINARYOPF(std::pow);
+        case ExprOpType::SIN: UNARYOP(std::sin);
+        case ExprOpType::COS: UNARYOP(std::cos);
+
+        case ExprOpType::TERNARY: {
+            check_stack(3);
+            LOAD2(t, f);
+            LOAD1(c);
+            OUT((c > 0.0f ? t : f));
+            break;
+        }
+
+        // Rank-order operator
+        case ExprOpType::SORT: {
+            check_stack(op.imm.u);
+            std::vector<float> xs(&stack[stack.size() - op.imm.u], &*stack.end());
+            std::sort(xs.begin(), xs.end(), [](float l, float r) { return l > r; });
+            std::copy(xs.begin(), xs.end(), &stack[stack.size() - op.imm.u]);
+            break;
+        }
+        case ExprOpType::ARGMIN:
+        case ExprOpType::ARGMAX: {
+            check_stack(op.imm.i);
+            const int off = stack.size() - op.imm.u;
+            int idx = 0;
+            float cur = stack[off+idx];
+            for (int i = 1; i < op.imm.i; i++) {
+                float x = stack[off+i];
+                if ((op.type == ExprOpType::ARGMIN && x < cur) ||
+                    (op.type == ExprOpType::ARGMAX && x > cur)) {
+                    cur = x;
+                    idx = i;
+                }
+            }
+            stack.resize(off);
+            OUT(idx);
+            break;
+        }
+        case ExprOpType::ARGSORT: {
+            check_stack(op.imm.u);
+            std::vector<int> idxs(op.imm.u);
+            std::iota(idxs.begin(), idxs.end(), 0);
+            const int off = stack.size() - op.imm.u;
+            std::stable_sort(idxs.begin(), idxs.end(), [&stack, off](int l, int r) { return stack[off+l] > stack[off+r]; });
+            std::copy(idxs.begin(), idxs.end(), &stack[stack.size() - op.imm.u]);
+            break;
+        }
+        }
+#undef UNARYOP
+#undef BINARYOPF
+#undef BINARYOP
+#undef OUT
+    }
+
+    if (rstk) { // only for debug
+        *rstk = std::move(stack);
+        return 0.0f;
+    }
+
+    if (stack.empty())
+        throw std::runtime_error("empty expression");
+    if (stack.size() > 1)
+        throw std::runtime_error("unconsumed " + std::to_string(stack.size()) + " values on stack");
+
+    return stack[0];
+}
+
+// Select
+struct SelectData {
+    VSNodeRef *propNodes[MAX_EXPR_INPUTS];
+    std::vector<VSNodeRef *> srcNodes;
+    VSVideoInfo vi;
+    int numPropInputs;
+    std::vector<ExprOp> ops[3];
+
+    SelectData() : propNodes(), srcNodes(), vi(), numPropInputs(), ops() {}
+};
+
+static void VS_CC selectInit(VSMap *in, VSMap *out, void **instanceData, VSNode *node, VSCore *core, const VSAPI *vsapi) {
+    SelectData *d = static_cast<SelectData *>(*instanceData);
+    vsapi->setVideoInfo(&d->vi, 1, node);
+}
+
+static const VSFrameRef *VS_CC selectGetFrame(int n, int activationReason, void **instanceData, void **frameData, VSFrameContext *frameCtx, VSCore *core, const VSAPI *vsapi) {
+    SelectData *d = static_cast<SelectData *>(*instanceData);
+    struct RuntimeData {
+        int selectedClip[3];
+
+        RuntimeData() : selectedClip() {}
+    };
+
+    if (activationReason == arInitial) {
+        for (int i = 0; i < d->numPropInputs; i++)
+            vsapi->requestFrameFilter(n, d->propNodes[i], frameCtx);
+    } else if (activationReason == arAllFramesReady && !*frameData) {
+        const VSFrameRef *props[MAX_EXPR_INPUTS] = {};
+        for (int i = 0; i < d->numPropInputs; i++) {
+            props[i] = vsapi->getFrameFilter(n, d->propNodes[i], frameCtx);
+        }
+
+        std::unique_ptr<RuntimeData> rd(new RuntimeData);
+
+        auto propGet = [&props, vsapi](int idx, const std::string &name) -> float {
+            auto m = vsapi->getFramePropsRO(props[idx]);
+            int err = 0;
+            float val = vsapi->propGetInt(m, name.c_str(), 0, &err);
+            if (err == peType)
+                val = vsapi->propGetFloat(m, name.c_str(), 0, &err);
+            if (err != 0)
+                val = 0.0f; // XXX: non-existant property defaults to 0.
+            return val;
+        };
+        for (int i = 0; i < d->vi.format->numPlanes; i++) {
+            float x;
+            try {
+                x = interpret(d->ops[i], n, d->vi.width, d->vi.height, -1 /* Y */, -1 /* X */,
+                              [](const ExprOp &op, int y, int x) -> float { return 0.0f; } /* pixelGet */,
+                              propGet);
+            } catch (std::runtime_error &e) {
+                x = 0.0f;
+            }
+            x = std::round(x);
+            rd->selectedClip[i] = std::max(0, std::min((int)x, (int)d->srcNodes.size() - 1));
+        }
+
+        for (int i = 0; i < d->numPropInputs; i++) {
+            vsapi->freeFrame(props[i]);
+        }
+
+        for (int i = 0; i < d->vi.format->numPlanes; i++)
+            vsapi->requestFrameFilter(n, d->srcNodes[rd->selectedClip[i]], frameCtx);
+        *frameData = reinterpret_cast<void *>(rd.release());
+    } else if (activationReason == arAllFramesReady) {
+        std::unique_ptr<RuntimeData> rd(reinterpret_cast<RuntimeData *>(*frameData));
+        *frameData = nullptr;
+
+        const VSFormat *fi = d->vi.format;
+        const VSFrameRef *srcf[3] = {};
+        for (int i = 0; i < fi->numPlanes; i++) {
+            srcf[i] = vsapi->getFrameFilter(n, d->srcNodes[rd->selectedClip[i]], frameCtx);
+        }
+
+        int height = vsapi->getFrameHeight(srcf[0], 0);
+        int width = vsapi->getFrameWidth(srcf[0], 0);
+        int planes[3] = { 0, 1, 2 };
+        VSFrameRef *dst = vsapi->newVideoFrame2(fi, width, height, srcf, planes, srcf[0], core);
+
+        for (int i = 0; i < d->vi.format->numPlanes; i++) {
+            vsapi->freeFrame(srcf[i]);
+        }
+
+        return dst;
+    }
+
+    return nullptr;
+}
+
+static void VS_CC selectFree(void *instanceData, VSCore *core, const VSAPI *vsapi) {
+    SelectData *d = static_cast<SelectData *>(instanceData);
+    for (int i = 0; i < d->numPropInputs; i++)
+        vsapi->freeNode(d->propNodes[i]);
+    for (auto *p: d->srcNodes)
+        vsapi->freeNode(p);
+    delete d;
+}
+
+static void VS_CC selectCreate(const VSMap *in, VSMap *out, void *userData, VSCore *core, const VSAPI *vsapi) {
+    std::unique_ptr<SelectData> d(new SelectData);
+    int err;
+
+    try {
+        int numSrcInputs = vsapi->propNumElements(in, "clip_src");
+
+        for (int i = 0; i < numSrcInputs; i++) {
+            d->srcNodes.push_back(vsapi->propGetNode(in, "clip_src", i, &err));
+        }
+
+        std::vector<const VSVideoInfo *> vi;
+        for (auto *p: d->srcNodes) {
+            vi.push_back(vsapi->getVideoInfo(p));
+        }
+
+        for (int i = 0; i < numSrcInputs; i++) {
+            if (!isConstantFormat(vi[i]))
+                throw std::runtime_error("Only src clips with constant format and dimensions allowed");
+            if (vi[0]->format->numPlanes != vi[i]->format->numPlanes
+                || vi[0]->format->subSamplingW != vi[i]->format->subSamplingW
+                || vi[0]->format->subSamplingH != vi[i]->format->subSamplingH
+                || vi[0]->width != vi[i]->width
+                || vi[0]->height != vi[i]->height)
+            {
+                throw std::runtime_error("All src inputs must have the same number of planes and the same dimensions, subsampling included");
+            }
+            if (!isSameFormat(vi[0], vi[i]))
+                throw std::runtime_error("All src inputs must have the same format");
+        }
+
+        d->numPropInputs = vsapi->propNumElements(in, "prop_src");
+        if (d->numPropInputs > MAX_EXPR_INPUTS)
+            throw std::runtime_error("More than " + std::to_string(MAX_EXPR_INPUTS) + " prop clips provided");
+
+        for (int i = 0; i < d->numPropInputs; i++) {
+            d->propNodes[i] = vsapi->propGetNode(in, "prop_src", i, &err);
+        }
+
+        d->vi = *vi[0];
+
+        int nexpr = vsapi->propNumElements(in, "expr");
+        const int numPlanes = d->vi.format->numPlanes;
+        if (nexpr > numPlanes)
+            throw std::runtime_error("More expressions given than there are planes");
+
+        std::string expr[3];
+        for (int i = 0; i < nexpr; i++) {
+            expr[i] = vsapi->propGetData(in, "expr", i, nullptr);
+        }
+        for (int i = nexpr; i < 3; ++i) {
+            expr[i] = expr[nexpr - 1];
+        }
+        for (int i = 0; i < numPlanes; i++) {
+            auto tokens = tokenize(expr[i]);
+            for (const auto &tok: tokens) {
+                auto op = decodeToken(tok, true);
+                d->ops[i].push_back(op);
+            }
+            try {
+                const int numPropInputs = d->numPropInputs;
+                (void)interpret(d->ops[i], 0, d->vi.width, d->vi.height, -1 /* Y */, -1 /* X */,
+                          [](const ExprOp &op, int y, int x) -> float { /* pixelGet */
+                              throw std::runtime_error("unable to use pixel values in Select");
+                          },
+                          [numPropInputs](int index, const std::string &name) -> float { /* propGet */
+                              if (index >= numPropInputs)
+                                  throw std::runtime_error("property access clip out of range.");
+                              return 0.0f;
+                          });
+            } catch (std::runtime_error &e) {
+                throw e;
+            }
+        }
+    } catch (std::runtime_error &e) {
+        for (int i = 0; i < MAX_EXPR_INPUTS; i++)
+            vsapi->freeNode(d->propNodes[i]);
+        for (auto *p: d->srcNodes)
+            vsapi->freeNode(p);
+        vsapi->setError(out, (std::string{ "Select: " } + e.what()).c_str());
+        return;
+    }
+
+    vsapi->createFilter(in, out, "Select", selectInit, selectGetFrame, selectFree, fmParallel, 0, d.release(), core);
+}
+
 void VS_CC versionCreate(const VSMap *in, VSMap *out, void *user_data, VSCore *core, const VSAPI *vsapi)
 {
     vsapi->propSetData(out, "version", VERSION, -1, paAppend);
     vsapi->propSetData(out, "expr_backend", "llvm", -1, paAppend);
     for (const auto &f : features)
         vsapi->propSetData(out, "expr_features", f.c_str(), -1, paAppend);
+    for (const auto &f : selectFeatures)
+        vsapi->propSetData(out, "select_features", f.c_str(), -1, paAppend);
 }
 
 } // namespace
@@ -1489,6 +1978,7 @@ void VS_CC versionCreate(const VSMap *in, VSMap *out, void *user_data, VSCore *c
 void VS_CC exprInitialize(VSConfigPlugin configFunc, VSRegisterFunction registerFunc, VSPlugin *plugin) {
     //configFunc("com.vapoursynth.expr", "expr", "VapourSynth Expr Filter", VAPOURSYNTH_API_VERSION, 1, plugin);
     registerFunc("Expr", "clips:clip[];expr:data[];format:int:opt;opt:int:opt;boundary:int:opt;", exprCreate, nullptr, plugin);
+    registerFunc("Select", "clip_src:clip[];prop_src:clip[];expr:data[];", selectCreate, nullptr, plugin);
     registerFunc("Version", "", versionCreate, nullptr, plugin);
     initExpr();
 }

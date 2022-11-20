@@ -81,6 +81,32 @@ This works just like [`std.Expr`](http://www.vapoursynth.com/doc/functions/expr.
   - hexadecimals: 0x123 or 0x123.4p5
   - octals: 023 (however, invalid octal numbers will be parsed as floating points, so "09" will be parsed the same as "9.0")
 
+Select
+----
+
+`akarin.Select(clip[] clip_src, clip[] prop_src, string[] expr)`
+
+For each frame evaluate the expression `expr` where clip variables (`a-z`) references the corresponding frame from `prop_src`.
+The result of the evaluation is used as an index to pick a clip from `clip_src` array which is used to satisfy the current frame requestion.
+
+It could be used to replace common uses of `std.FrameEval` where you want to evaluate some metrics and then choose one of the clip to use.
+
+In addition to all operators supported by `Expr` (except those that access pixel values, which is not possible in `Select`), `Select`  also has a few extensions:
+- `argminN` and `argmaxN`: find the min/max value of the top N items on the stack and return its index. For example `2 1 0 3 argmin4` should return 2 (as the minimum value 0 is the 3rd value).
+- `argsortN`: stable sort the top N elements on the stack and return their respective indices. It is used when you want to pick a rank other than the minimum or maximum, for example, the median.
+
+Also note, unlike `Expr`, where non-existent frame property will be turned into `nan`, `Select` will use `0.0` instead.
+
+As an example, `mvsfunc.FilterIf` can be implemented like this:
+```python
+x = mvsfunc.FilterIf(src, flt, '_Combed', prop_clip)             # is equivalent to:
+x = core.akarin.Select([src, flt], prop_clip, 'x._Combed 1 0 ?') # when x._Combed is set and True, then pick the 2nd clip (flt)
+```
+
+
+Version
+----
+
 `akarin.Version()`
 
 Use this function to query the version and features of the plugin. It will return a Python dict with the following keys:
