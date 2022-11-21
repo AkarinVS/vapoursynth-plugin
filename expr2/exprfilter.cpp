@@ -275,8 +275,10 @@ ExprOp decodeToken(const std::string &token, bool extended = false)
         return it->second;
     } else if (token.size() == 1 && token[0] >= 'a' && token[0] <= 'z') {
         return{ ExprOpType::MEM_LOAD, token[0] >= 'x' ? token[0] - 'x' : token[0] - 'a' + 3 };
-    } else if ((token.back() != '@' && token.back() != '!') &&
-               (token.substr(0, 3) == "dup" || token.substr(0, 4) == "swap" ||
+    } else if (token.size() >= 2 && (token.back() == '@' || token.back() == '!')) {
+        // 'name@' load named variable; 'name!' store to named variable.
+        return{ token.back() == '@' ? ExprOpType::VAR_LOAD : ExprOpType::VAR_STORE, -1, token.substr(0, token.size()-1) };
+    } else if ((token.substr(0, 3) == "dup" || token.substr(0, 4) == "swap" ||
                 token.substr(0, 4) == "drop" || token.substr(0, 4) == "sort")) {
         size_t prefix = token[1] == 'u' ? 3 : 4;
         size_t count = 0;
@@ -318,9 +320,6 @@ ExprOp decodeToken(const std::string &token, bool extended = false)
             return{ ExprOpType::ARGMIN, idx };
         else //if (token[4] == 'a')
             return{ ExprOpType::ARGMAX, idx };
-    } else if (token.size() >= 2 && (token.back() == '@' || token.back() == '!')) {
-        // 'name@' load variable; 'name!' store to variable.
-        return{ token.back() == '@' ? ExprOpType::VAR_LOAD : ExprOpType::VAR_STORE, -1, token.substr(0, token.size()-1) };
     } else if (token.size() >= 3 && token[0] >= 'a' && token[0] <= 'z' && token[1] == '.') {
         // frame property access
         return{ ExprOpType::CONST_LOAD, static_cast<int>(LoadConstType::LAST) + (token[0] >= 'x' ? token[0] - 'x' : token[0] - 'a' + 3), token.substr(2) };
@@ -1725,9 +1724,7 @@ float interpret(const std::vector<ExprOp> &ops, int N, int width, int height, in
         // Rank-order operator
         case ExprOpType::SORT: {
             check_stack(op.imm.u);
-            std::vector<float> xs(&stack[stack.size() - op.imm.u], &*stack.end());
-            std::sort(xs.begin(), xs.end(), [](float l, float r) { return l > r; });
-            std::copy(xs.begin(), xs.end(), &stack[stack.size() - op.imm.u]);
+            std::sort(&stack[stack.size() - op.imm.u], &*stack.end(), [](float l, float r) { return l > r; });
             break;
         }
         case ExprOpType::ARGMIN:
@@ -1839,8 +1836,14 @@ static const VSFrameRef *VS_CC selectGetFrame(int n, int activationReason, void 
             vsapi->freeFrame(props[i]);
         }
 
-        for (int i = 0; i < d->vi.format->numPlanes; i++)
-            vsapi->requestFrameFilter(n, d->srcNodes[rd->selectedClip[i]], frameCtx);
+        for (int i = 0; i < d->vi.format->numPlanes; i++) {
+            const int sel = rd->selectedClip[i];
+            bool requested = false;
+            for (int j = 0; j < i; j++)
+                if (rd->selectedClip[j] == sel) requested = true;
+            if (!requested)
+                vsapi->requestFrameFilter(n, d->srcNodes[sel], frameCtx);
+        }
         *frameData = reinterpret_cast<void *>(rd.release());
     } else if (activationReason == arAllFramesReady) {
         std::unique_ptr<RuntimeData> rd(reinterpret_cast<RuntimeData *>(*frameData));
