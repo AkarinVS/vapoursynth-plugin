@@ -236,7 +236,9 @@ static void VS_CC vfxCreate(const VSMap *in, VSMap *out, void *userData, VSCore 
             if (err) strength = 0;
             d->strength = strength;
 
-            const char *modelDir = getenv("MODEL_DIR"); // TODO: configurable model directory?
+            const char *modelDir = vsapi->propGetData(in, "model_dir", 0, &err);
+            if (modelDir == nullptr)
+                modelDir = getenv("MODEL_DIR");
             if (modelDir == nullptr)
                 modelDir = "C:\\Program Files\\NVIDIA Corporation\\NVIDIA Video Effects\\models";
             fprintf(stderr, "MODEL_DIR = %s\n", modelDir);
@@ -338,5 +340,5 @@ void VS_CC vfxInitialize(VSConfigPlugin configFunc, VSRegisterFunction registerF
 VS_EXTERNAL_API(void) VapourSynthPluginInit(VSConfigPlugin configFunc, VSRegisterFunction registerFunc, VSPlugin *plugin) {
     configFunc("info.akarin.plugin", "akarin2", "Experimental Nvidia Maxine plugin", VAPOURSYNTH_API_VERSION, 1, plugin);
 #endif
-    registerFunc("DLVFX", "clip:clip;op:int;scale:float:opt;strength:float:opt;output_depth:int:opt;num_streams:int:opt", vfxCreate, nullptr, plugin);
+    registerFunc("DLVFX", "clip:clip;op:int;scale:float:opt;strength:float:opt;output_depth:int:opt;num_streams:int:opt;model_dir:data:opt;", vfxCreate, nullptr, plugin);
 }
