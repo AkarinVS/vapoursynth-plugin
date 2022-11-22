@@ -193,6 +193,9 @@ static void VS_CC vfxCreate(const VSMap *in, VSMap *out, void *userData, VSCore 
     for (int i = 0; i < num_streams; ++i) {
         auto d = &ds[i];
         d->num_streams = num_streams;
+        size_t op = ~0U;
+        enum { OP_AR, OP_SUPERRES, OP_DENOISE };
+        const NvVFX_EffectSelector selectors[] = { NVVFX_FX_ARTIFACT_REDUCTION, NVVFX_FX_SUPER_RES, NVVFX_FX_DENOISING };
         try {
             if (autoDllErrors.size() > 0) {
                 std::string error, last;
@@ -215,9 +218,7 @@ static void VS_CC vfxCreate(const VSMap *in, VSMap *out, void *userData, VSCore 
             if (d->vi.format->numPlanes != 3 || d->vi.format->colorFamily != cmRGB)
                 throw std::runtime_error("input clip must be RGB format");
 
-            enum { OP_AR, OP_SUPERRES, OP_DENOISE };
-            const NvVFX_EffectSelector selectors[] = { NVVFX_FX_ARTIFACT_REDUCTION, NVVFX_FX_SUPER_RES, NVVFX_FX_DENOISING };
-            size_t op = int64ToIntS(vsapi->propGetInt(in, "op", 0, &err));
+            op = int64ToIntS(vsapi->propGetInt(in, "op", 0, &err));
             if (err) throw std::runtime_error("op is required argument");
             if (op >= sizeof selectors / sizeof selectors[0])
                 throw std::runtime_error("op is out of range.");
@@ -272,15 +273,6 @@ static void VS_CC vfxCreate(const VSMap *in, VSMap *out, void *userData, VSCore 
                 fprintf(stderr, "NvVFX set model directory to %s failed: %x (%s)\n", modelDir, r, NvCV_GetErrorStringFromCode(r));
                 throw std::runtime_error("unable to set model directory " + std::string(modelDir));
             }
-
-            if (op == OP_DENOISE) {
-                unsigned int stateSizeInBytes = 0;
-                CK_VFX(NvVFX_GetU32(d->vfx, NVVFX_STATE_SIZE, &stateSizeInBytes));
-                CK_CUDA(cuMemAlloc_v2(&d->state, stateSizeInBytes));
-                CK_CUDA(cuMemsetD8Async(d->state, 0, stateSizeInBytes, d->stream));
-                void *stateArray[1] = { d->state };
-                CK_VFX(NvVFX_SetObject(d->vfx, NVVFX_STATE, (void*)stateArray));
-            }
         } catch (std::runtime_error &e) {
             if (d->node)
                 vsapi->freeNode(d->node);
@@ -327,6 +319,15 @@ static void VS_CC vfxCreate(const VSMap *in, VSMap *out, void *userData, VSCore 
 
         CK_VFX(NvVFX_SetImage(d->vfx, NVVFX_INPUT_IMAGE, &d->srcGpuImg));
         CK_VFX(NvVFX_SetImage(d->vfx, NVVFX_OUTPUT_IMAGE, &d->dstGpuImg));
+
+        if (op == OP_DENOISE) {
+            unsigned int stateSizeInBytes = 0;
+            CK_VFX(NvVFX_GetU32(d->vfx, NVVFX_STATE_SIZE, &stateSizeInBytes));
+            CK_CUDA(cuMemAlloc_v2(&d->state, stateSizeInBytes));
+            CK_CUDA(cuMemsetD8Async(d->state, 0, stateSizeInBytes, d->stream));
+            void *stateArray[1] = { d->state };
+            CK_VFX(NvVFX_SetObject(d->vfx, NVVFX_STATE, (void*)stateArray));
+        }
 
         CK_VFX(NvVFX_Load(d->vfx));
     }
