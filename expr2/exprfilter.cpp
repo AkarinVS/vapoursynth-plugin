@@ -44,7 +44,6 @@
 
 namespace {
 
-#define MAX_EXPR_INPUTS 26
 #define LANES 8
 #define UNROLL 1
 
@@ -86,6 +85,9 @@ enum class ExprOpType {
     ARGMIN, ARGMAX, ARGSORT,
 };
 
+static const std::string clipNamePrefix { "src" };
+
+// All available features.
 std::vector<std::string> features = {
     "x.property",
     "sin", "cos",
@@ -98,6 +100,7 @@ std::vector<std::string> features = {
     "sort",
     "x[]",
     "bitand", "bitor", "bitxor", "bitnot",
+    clipNamePrefix + "0", clipNamePrefix + "26",
 };
 
 std::vector<std::string> selectFeatures = {
@@ -110,6 +113,7 @@ std::vector<std::string> selectFeatures = {
     "drop",
     "sort",
     "bitand", "bitor", "bitxor", "bitnot",
+    clipNamePrefix + "0", clipNamePrefix + "26",
     // extended features only available for Select.
     "argmin", "argmax", "argsort",
 };
@@ -186,12 +190,12 @@ struct Compiled {
 };
 
 struct ExprData {
-    VSNodeRef *node[MAX_EXPR_INPUTS];
+    std::vector<VSNodeRef *> node;
     VSVideoInfo vi;
     int plane[3];
     int numInputs;
     Compiled compiled[3];
-    typedef void (*ProcessProc)(void *rwptrs, int strides[MAX_EXPR_INPUTS + 1], float *props, int width, int height);
+    typedef void (*ProcessProc)(void *rwptrs, int *strides, float *props, int width, int height);
     ProcessProc proc[3];
 
     ExprData() : node(), vi(), plane(), numInputs(), proc() {}
@@ -266,15 +270,30 @@ ExprOp decodeToken(const std::string &token, bool extended = false)
         { "width",{ ExprOpType::CONST_LOAD, static_cast<int>(LoadConstType::Width) } },
         {"height",{ ExprOpType::CONST_LOAD, static_cast<int>(LoadConstType::Height) } },
     };
-    static const std::regex relpixelRe { "^([a-z])\\[(-?[0-9]+),(-?[0-9]+)\\](:[cm])?$" };
-    static const std::regex abspixelRe { "^([a-z])\\[\\]$" };
+    const std::string clipNameRePrefix { "^([a-z]|" + clipNamePrefix + "[0-9]+)" };
+    static const std::regex clipNameRe { clipNameRePrefix + "$" };
+    static const std::regex relpixelRe { clipNameRePrefix + "\\[(-?[0-9]+),(-?[0-9]+)\\](:[cm])?$" };
+    static const std::regex abspixelRe { clipNameRePrefix + "\\[\\]$" };
+    static const std::regex framePropRe { clipNameRePrefix + "\\.([^\\[\\]]*)$" };
     std::smatch match;
+
+    auto extractClipId = [](const std::string &name) -> int {
+        if (name.size() == 1)
+            return name[0] >= 'x' ? name[0] - 'x' : name[0] - 'a' + 3;
+        int idx = -1;
+        try {
+            idx = std::stoi(name.substr(clipNamePrefix.size()));
+        } catch (...) {
+            throw std::runtime_error("invalid clip name: " + name);
+        }
+        return idx;
+    };
 
     auto it = simple.find(token);
     if (it != simple.end()) {
         return it->second;
-    } else if (token.size() == 1 && token[0] >= 'a' && token[0] <= 'z') {
-        return{ ExprOpType::MEM_LOAD, token[0] >= 'x' ? token[0] - 'x' : token[0] - 'a' + 3 };
+    } else if (std::regex_match(token, match, clipNameRe)) {
+        return{ ExprOpType::MEM_LOAD, extractClipId(token) };
     } else if (token.size() >= 2 && (token.back() == '@' || token.back() == '!')) {
         // 'name@' load named variable; 'name!' store to named variable.
         return{ token.back() == '@' ? ExprOpType::VAR_LOAD : ExprOpType::VAR_STORE, -1, token.substr(0, token.size()-1) };
@@ -320,19 +339,22 @@ ExprOp decodeToken(const std::string &token, bool extended = false)
             return{ ExprOpType::ARGMIN, idx };
         else //if (token[4] == 'a')
             return{ ExprOpType::ARGMAX, idx };
-    } else if (token.size() >= 3 && token[0] >= 'a' && token[0] <= 'z' && token[1] == '.') {
+    } else if (std::regex_match(token, match, framePropRe)) {
         // frame property access
-        return{ ExprOpType::CONST_LOAD, static_cast<int>(LoadConstType::LAST) + (token[0] >= 'x' ? token[0] - 'x' : token[0] - 'a' + 3), token.substr(2) };
+        ASSERT(match.size() == 3);
+        auto clip = match[1].str(), name = match[2].str();
+        int clipi = static_cast<int>(LoadConstType::LAST) + extractClipId(clip);
+        return{ ExprOpType::CONST_LOAD, clipi, name, 0 };
     } else if (std::regex_match(token, match, relpixelRe)) {
         ASSERT(match.size() == 5);
         auto clip = match[1].str(), sx = match[2].str(), sy = match[3].str(), flag = match[4].str();
         BoundaryCondition bc = flag.size() == 0 ? BoundaryCondition::Unspecified :
             (flag[1] == 'm' ? BoundaryCondition::Mirrored : BoundaryCondition::Clamped);
-        return{ ExprOpType::MEM_LOAD, clip[0] >= 'x' ? clip[0] - 'x' : clip[0] - 'a' + 3, "", atoi(sx.c_str()), atoi(sy.c_str()), bc };
+        return{ ExprOpType::MEM_LOAD, extractClipId(clip), "", atoi(sx.c_str()), atoi(sy.c_str()), bc };
     } else if (std::regex_match(token, match, abspixelRe)) {
         ASSERT(match.size() == 2);
         auto clip = match[1].str();
-        return{ ExprOpType::MEM_LOAD_VAR, clip[0] >= 'x' ? clip[0] - 'x' : clip[0] - 'a' + 3 };
+        return{ ExprOpType::MEM_LOAD_VAR, extractClipId(clip) };
     } else {
         size_t pos = 0;
         long long l = 0;
@@ -490,7 +512,7 @@ class Compiler {
 
     struct State {
         std::vector<pointer> wptrs;
-        rr::Int strides[MAX_EXPR_INPUTS+1];
+        std::vector<rr::Int> strides;
         rr::Pointer<rr::Float> consts;
         rr::Int width;
         rr::Int height;
@@ -1149,7 +1171,7 @@ void Compiler<lanes>::buildOneIter(const Helper &helpers, State &state)
     if (stack.empty())
         throw std::runtime_error("empty expression: " + ctx.expr);
     if (stack.size() > 1)
-        throw std::runtime_error("unconsumed values on stack: " + ctx.expr);
+        throw std::runtime_error(std::to_string(stack.size()) + " unconsumed values on stack: " + ctx.expr);
 
     auto res = stack.back();
     auto format = ctx.vo->format;
@@ -1288,7 +1310,7 @@ Compiled Compiler<lanes>::compile()
 
     for (int i = 0; i < ctx.numInputs + 1; i++) {
         state.wptrs.push_back(*Pointer<Pointer<Byte>>(rwptrs + sizeof(void *) * i));
-        state.strides[i] = strides[i];
+        state.strides.push_back(Int(strides[i]));
     }
 
     auto &y = state.y, &x = state.x;
@@ -1323,7 +1345,7 @@ static const VSFrameRef *VS_CC exprGetFrame(int n, int activationReason, void **
         for (int i = 0; i < numInputs; i++)
             vsapi->requestFrameFilter(n, d->node[i], frameCtx);
     } else if (activationReason == arAllFramesReady) {
-        const VSFrameRef *src[MAX_EXPR_INPUTS] = {};
+        std::vector<const VSFrameRef *> src(numInputs, nullptr);
         for (int i = 0; i < numInputs; i++)
             src[i] = vsapi->getFrameFilter(n, d->node[i], frameCtx);
 
@@ -1334,8 +1356,8 @@ static const VSFrameRef *VS_CC exprGetFrame(int n, int activationReason, void **
         const VSFrameRef *srcf[3] = { d->plane[0] != poCopy ? nullptr : src[0], d->plane[1] != poCopy ? nullptr : src[0], d->plane[2] != poCopy ? nullptr : src[0] };
         VSFrameRef *dst = vsapi->newVideoFrame2(fi, width, height, srcf, planes, src[0], core);
 
-        const uint8_t *srcp[MAX_EXPR_INPUTS] = {};
-        int strides[MAX_EXPR_INPUTS + 1] = {};
+        std::vector<uint8_t *> rwptrs(numInputs + 1, nullptr);
+        std::vector<int> strides(numInputs + 1, 0);
 
         for (int plane = 0; plane < d->vi.format->numPlanes; plane++) {
             if (d->plane[plane] != poProcess)
@@ -1344,19 +1366,14 @@ static const VSFrameRef *VS_CC exprGetFrame(int n, int activationReason, void **
             strides[0] = vsapi->getStride(dst, plane);
             for (int i = 0; i < numInputs; i++) {
                 if (d->node[i]) {
-                    srcp[i] = vsapi->getReadPtr(src[i], plane);
+                    rwptrs[i + 1] = (uint8_t *)vsapi->getReadPtr(src[i], plane);
                     strides[i + 1] = vsapi->getStride(src[i], plane);
                 }
             }
 
-            uint8_t *dstp = vsapi->getWritePtr(dst, plane);
+            rwptrs[0] = vsapi->getWritePtr(dst, plane);
             int h = vsapi->getFrameHeight(dst, plane);
             int w = vsapi->getFrameWidth(dst, plane);
-
-            uint8_t *rwptrs[MAX_EXPR_INPUTS + 1] = { dstp };
-            for (int i = 0; i < numInputs; i++) {
-                rwptrs[i + 1] = const_cast<uint8_t *>(srcp[i]);
-            }
 
             union U {
                 int i;
@@ -1377,10 +1394,10 @@ static const VSFrameRef *VS_CC exprGetFrame(int n, int activationReason, void **
             }
 
             ExprData::ProcessProc proc = reinterpret_cast<ExprData::ProcessProc>(const_cast<void *>(d->compiled[plane].routine->getEntry()));
-            proc(rwptrs, strides, reinterpret_cast<float*>(&consts[0]), w, h);
+            proc(&rwptrs[0], &strides[0], reinterpret_cast<float*>(&consts[0]), w, h);
         }
 
-        for (int i = 0; i < MAX_EXPR_INPUTS; i++) {
+        for (int i = 0; i < numInputs; i++) {
             vsapi->freeFrame(src[i]);
         }
         return dst;
@@ -1391,8 +1408,8 @@ static const VSFrameRef *VS_CC exprGetFrame(int n, int activationReason, void **
 
 static void VS_CC exprFree(void *instanceData, VSCore *core, const VSAPI *vsapi) {
     ExprData *d = static_cast<ExprData *>(instanceData);
-    for (int i = 0; i < MAX_EXPR_INPUTS; i++)
-        vsapi->freeNode(d->node[i]);
+    for (auto *p: d->node)
+        vsapi->freeNode(p);
     delete d;
 }
 
@@ -1404,14 +1421,12 @@ static void VS_CC exprCreate(const VSMap *in, VSMap *out, void *userData, VSCore
 
     try {
         d->numInputs = vsapi->propNumElements(in, "clips");
-        if (d->numInputs > 26)
-            throw std::runtime_error("More than 26 input clips provided");
 
         for (int i = 0; i < d->numInputs; i++) {
-            d->node[i] = vsapi->propGetNode(in, "clips", i, &err);
+            d->node.push_back(vsapi->propGetNode(in, "clips", i, &err));
         }
 
-        const VSVideoInfo *vi[MAX_EXPR_INPUTS] = {};
+        std::vector<const VSVideoInfo *> vi(d->numInputs, nullptr);
         for (int i = 0; i < d->numInputs; i++) {
             if (d->node[i])
                 vi[i] = vsapi->getVideoInfo(d->node[i]);
@@ -1485,14 +1500,13 @@ static void VS_CC exprCreate(const VSMap *in, VSMap *out, void *userData, VSCore
             if (d->plane[i] != poProcess)
                 continue;
 
-            Compiler<LANES> comp(expr[i], &d->vi, vi, d->numInputs, optMask, mirror);
+            Compiler<LANES> comp(expr[i], &d->vi, &vi[0], d->numInputs, optMask, mirror);
             d->compiled[i] = comp.compile();
             d->proc[i] = reinterpret_cast<ExprData::ProcessProc>(const_cast<void *>(d->compiled[i].routine->getEntry()));
         }
     } catch (std::runtime_error &e) {
-        for (int i = 0; i < MAX_EXPR_INPUTS; i++) {
-            vsapi->freeNode(d->node[i]);
-        }
+        for (auto p: d->node)
+            vsapi->freeNode(p);
         vsapi->setError(out, (std::string{ "Expr: " } + e.what()).c_str());
         return;
     }
@@ -1776,7 +1790,7 @@ float interpret(const std::vector<ExprOp> &ops, int N, int width, int height, in
 
 // Select
 struct SelectData {
-    VSNodeRef *propNodes[MAX_EXPR_INPUTS];
+    std::vector<VSNodeRef *> propNodes;
     std::vector<VSNodeRef *> srcNodes;
     VSVideoInfo vi;
     int numPropInputs;
@@ -1802,7 +1816,7 @@ static const VSFrameRef *VS_CC selectGetFrame(int n, int activationReason, void 
         for (int i = 0; i < d->numPropInputs; i++)
             vsapi->requestFrameFilter(n, d->propNodes[i], frameCtx);
     } else if (activationReason == arAllFramesReady && !*frameData) {
-        const VSFrameRef *props[MAX_EXPR_INPUTS] = {};
+        std::vector<const VSFrameRef *> props(d->numPropInputs, nullptr);
         for (int i = 0; i < d->numPropInputs; i++) {
             props[i] = vsapi->getFrameFilter(n, d->propNodes[i], frameCtx);
         }
@@ -1872,8 +1886,8 @@ static const VSFrameRef *VS_CC selectGetFrame(int n, int activationReason, void 
 
 static void VS_CC selectFree(void *instanceData, VSCore *core, const VSAPI *vsapi) {
     SelectData *d = static_cast<SelectData *>(instanceData);
-    for (int i = 0; i < d->numPropInputs; i++)
-        vsapi->freeNode(d->propNodes[i]);
+    for (auto *p: d->propNodes)
+        vsapi->freeNode(p);
     for (auto *p: d->srcNodes)
         vsapi->freeNode(p);
     delete d;
@@ -1911,11 +1925,9 @@ static void VS_CC selectCreate(const VSMap *in, VSMap *out, void *userData, VSCo
         }
 
         d->numPropInputs = vsapi->propNumElements(in, "prop_src");
-        if (d->numPropInputs > MAX_EXPR_INPUTS)
-            throw std::runtime_error("More than " + std::to_string(MAX_EXPR_INPUTS) + " prop clips provided");
 
         for (int i = 0; i < d->numPropInputs; i++) {
-            d->propNodes[i] = vsapi->propGetNode(in, "prop_src", i, &err);
+            d->propNodes.push_back(vsapi->propGetNode(in, "prop_src", i, &err));
         }
 
         d->vi = *vi[0];
@@ -1954,8 +1966,8 @@ static void VS_CC selectCreate(const VSMap *in, VSMap *out, void *userData, VSCo
             }
         }
     } catch (std::runtime_error &e) {
-        for (int i = 0; i < MAX_EXPR_INPUTS; i++)
-            vsapi->freeNode(d->propNodes[i]);
+        for (auto *p: d->propNodes)
+            vsapi->freeNode(p);
         for (auto *p: d->srcNodes)
             vsapi->freeNode(p);
         vsapi->setError(out, (std::string{ "Select: " } + e.what()).c_str());
@@ -1963,6 +1975,184 @@ static void VS_CC selectCreate(const VSMap *in, VSMap *out, void *userData, VSCo
     }
 
     vsapi->createFilter(in, out, "Select", selectInit, selectGetFrame, selectFree, fmParallel, 0, d.release(), core);
+}
+
+// PropExpr
+struct PropExprData {
+    std::vector<VSNodeRef *> nodes;
+    VSVideoInfo vi;
+    std::vector<std::pair<std::string, std::vector<ExprOp>>> ops;
+
+    PropExprData() : nodes(), vi(), ops() {}
+};
+
+static void VS_CC propExprInit(VSMap *in, VSMap *out, void **instanceData, VSNode *node, VSCore *core, const VSAPI *vsapi) {
+    PropExprData *d = static_cast<PropExprData *>(*instanceData);
+    vsapi->setVideoInfo(&d->vi, 1, node);
+}
+
+static const VSFrameRef *VS_CC propExprGetFrame(int n, int activationReason, void **instanceData, void **frameData, VSFrameContext *frameCtx, VSCore *core, const VSAPI *vsapi) {
+    PropExprData *d = static_cast<PropExprData *>(*instanceData);
+
+    if (activationReason == arInitial) {
+        for (auto *p: d->nodes)
+            vsapi->requestFrameFilter(n, p, frameCtx);
+    } else if (activationReason == arAllFramesReady) {
+        std::vector<const VSFrameRef *> props(d->nodes.size(), nullptr);
+        for (size_t i = 0; i < d->nodes.size(); i++) {
+            props[i] = vsapi->getFrameFilter(n, d->nodes[i], frameCtx);
+        }
+
+        auto propGet = [&props, vsapi](int idx, const std::string &name) -> float {
+            auto m = vsapi->getFramePropsRO(props[idx]);
+            int err = 0;
+            float val = vsapi->propGetInt(m, name.c_str(), 0, &err);
+            if (err == peType)
+                val = vsapi->propGetFloat(m, name.c_str(), 0, &err);
+            if (err != 0)
+                val = 0.0f; // XXX: non-existant property defaults to 0.
+            return val;
+        };
+
+        const VSFormat *fi = d->vi.format;
+        const VSFrameRef *srcf[3] = { props[0], props[0], props[0] };
+
+        int height = vsapi->getFrameHeight(srcf[0], 0);
+        int width = vsapi->getFrameWidth(srcf[0], 0);
+        int planes[3] = { 0, 1, 2 };
+        VSFrameRef *dst = vsapi->newVideoFrame2(fi, width, height, srcf, planes, srcf[0], core);
+
+        std::vector<float> vals;
+        // Two step atomic update
+        for (const auto &pair: d->ops) {
+            const auto &ops = pair.second;
+            float x;
+            try {
+                x = interpret(ops, n, d->vi.width, d->vi.height, -1 /* Y */, -1 /* X */,
+                              [](const ExprOp &op, int y, int x) -> float { return 0.0f; } /* pixelGet */,
+                              propGet);
+            } catch (std::runtime_error &e) {
+                x = 0.0f;
+            }
+            vals.push_back(x);
+        }
+        VSMap *map = vsapi->getFramePropsRW(dst);
+        for (size_t i = 0; i < d->ops.size(); i++) {
+            const auto &name = d->ops[i].first;
+            const auto &ops = d->ops[i].second;
+            float v = vals[i];
+
+            vsapi->propDeleteKey(map, name.c_str());
+            if (ops.size() > 0) {
+                if (v == (float)(int64_t)v)
+                    vsapi->propSetInt(map, name.c_str(), (int64_t)v, paAppend);
+                else
+                    vsapi->propSetFloat(map, name.c_str(), v, paAppend);
+            }
+        }
+
+        for (auto *p: props)
+            vsapi->freeFrame(p);
+
+        return dst;
+    }
+
+    return nullptr;
+}
+
+static void VS_CC propExprFree(void *instanceData, VSCore *core, const VSAPI *vsapi) {
+    PropExprData *d = static_cast<PropExprData *>(instanceData);
+    for (auto *p: d->nodes)
+        vsapi->freeNode(p);
+    delete d;
+}
+
+static void VS_CC propExprCreate(const VSMap *in, VSMap *out, void *userData, VSCore *core, const VSAPI *vsapi) {
+    std::unique_ptr<PropExprData> d(new PropExprData);
+    int err;
+
+    try {
+        int numInputs = vsapi->propNumElements(in, "clips");
+
+        for (int i = 0; i < numInputs; i++) {
+            d->nodes.push_back(vsapi->propGetNode(in, "clips", i, &err));
+        }
+
+        std::vector<const VSVideoInfo *> vi;
+        for (auto *p: d->nodes) {
+            vi.push_back(vsapi->getVideoInfo(p));
+        }
+
+        d->vi = *vi[0];
+
+        auto func = vsapi->propGetFunc(in, "dict", 0, nullptr);
+        auto in_map = vsapi->createMap();
+        auto out_map = vsapi->createMap();
+
+        try {
+            vsapi->callFunc(func, in_map, out_map, core, vsapi);
+            int num_keys = vsapi->propNumKeys(out_map);
+            auto errmsg = vsapi->getError(out_map);
+            if (errmsg != nullptr)
+                throw std::runtime_error("dict evaluation failed: " + std::string(errmsg));
+            for (int i = 0; i < num_keys; i++) {
+                auto key = vsapi->propGetKey(out_map, i);
+                auto type = vsapi->propGetType(out_map, key);
+                std::string expr;
+                switch (type) {
+                case ptInt:
+                    expr = std::to_string(vsapi->propGetInt(out_map, key, 0, nullptr));
+                    break;
+                case ptFloat:
+                    expr = std::to_string(vsapi->propGetFloat(out_map, key, 0, nullptr));
+                    break;
+                case ptData:
+                    expr = vsapi->propGetData(out_map, key, 0, nullptr);
+                    break;
+                default:
+                    throw std::runtime_error("invalid type for key " + std::string(key) + ", only int/float/str are supported");
+                }
+
+                std::vector<ExprOp> ops;
+                if (expr.size() != 0) {
+                    auto tokens = tokenize(expr);
+                    for (const auto &tok: tokens) {
+                        auto op = decodeToken(tok, true);
+                        ops.push_back(op);
+                    }
+                    try {
+                        (void)interpret(ops, 0, d->vi.width, d->vi.height, -1 /* Y */, -1 /* X */,
+                                  [key](const ExprOp &op, int y, int x) -> float { /* pixelGet */
+                                      throw std::runtime_error(std::string(key) + ": unable to use pixel values in PropExpr");
+                                  },
+                                  [key, numInputs](int index, const std::string &name) -> float { /* propGet */
+                                      if (index >= numInputs)
+                                          throw std::runtime_error(std::string(key) + ": property access clip out of range");
+                                      return 0.0f;
+                                  });
+                    } catch (std::runtime_error &e) {
+                        throw e;
+                    }
+                }
+                d->ops.push_back({key, ops});
+            }
+            vsapi->freeMap(out_map);
+            vsapi->freeMap(in_map);
+        } catch (std::runtime_error &e) {
+            vsapi->freeMap(out_map);
+            vsapi->freeMap(in_map);
+            throw e;
+        }
+
+        vsapi->freeFunc(func);
+    } catch (std::runtime_error &e) {
+        for (auto *p: d->nodes)
+            vsapi->freeNode(p);
+        vsapi->setError(out, (std::string{ "PropExpr: " } + e.what()).c_str());
+        return;
+    }
+
+    vsapi->createFilter(in, out, "PropExpr", propExprInit, propExprGetFrame, propExprFree, fmParallel, 0, d.release(), core);
 }
 
 void VS_CC versionCreate(const VSMap *in, VSMap *out, void *user_data, VSCore *core, const VSAPI *vsapi)
@@ -1985,6 +2175,7 @@ void VS_CC exprInitialize(VSConfigPlugin configFunc, VSRegisterFunction register
     //configFunc("com.vapoursynth.expr", "expr", "VapourSynth Expr Filter", VAPOURSYNTH_API_VERSION, 1, plugin);
     registerFunc("Expr", "clips:clip[];expr:data[];format:int:opt;opt:int:opt;boundary:int:opt;", exprCreate, nullptr, plugin);
     registerFunc("Select", "clip_src:clip[];prop_src:clip[];expr:data[];", selectCreate, nullptr, plugin);
+    registerFunc("PropExpr", "clips:clip[];dict:func;", propExprCreate, nullptr, plugin);
     registerFunc("Version", "", versionCreate, nullptr, plugin);
     initExpr();
 }
