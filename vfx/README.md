@@ -24,6 +24,7 @@ c = mvf.Depth(c, 32) # only supports vs.RGBS formats
 # OP_AR: Artefact reduction, OP_SUPERRES: super resolution, OP_DENOISE: denoise.
 # strength: 0 for weak effect (weaker enhancement), 1 for strong effect (enhancement).
 # scale = 2/3/4 for super resolution, otherwise unused.
+# Note: OP_DENOISE does NOT work!
 OP_AR, OP_SUPERRES, OP_DENOISE = range(3)
 d = core.akarin2.DLVFX(c, op=OP_SUPERRES, scale=2, strength=0)
 

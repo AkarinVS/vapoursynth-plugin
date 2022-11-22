@@ -23,7 +23,8 @@ There are three operation modes ([official docs](https://docs.nvidia.com/deeplea
    input requirements: `90 <= height <= 1080`, `256 <= width <= 1920+128`, `width % 128 == 0`.
 - `op=1`: super resolution, `scale>1` controls the scale factor. `int strength` controls the enhancement strength (only 0 or 1 allowed).
    input requirements: see Table 1 (Scale and Resolution Support for Input Videos) in [official SDK docs](https://docs.nvidia.com/deeplearning/maxine/pdf/vfx-sdk-programming-guide.pdf), and `width >= 256`, `width % 128 == 0`, `height >= 90`.
-- `op=2`: denoising. `float strength` controls the strength. (Not working.)
+
+~~- `op=2`: denoising. `float strength` controls the strength.~~ (Not working.)
 
 Usage Notes:
 - Only 32-bit floating point RGB and 8-bit integer RGB24 clips are supported as input `clip`.
