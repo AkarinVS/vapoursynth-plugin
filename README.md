@@ -10,7 +10,7 @@ Computes the CAMBI banding score as `CAMBI` frame property. Unlike [VapourSynth-
 - `clip`: Clip to calculate CAMBI score. Only Gray/YUV format with integer sample type of 8/10-bit depth (subsampling can be arbitrary as cambi only uses the Y channel.)
 - `window_size` (min: 15, max: 127, default: 63): Window size to compute CAMBI. (default: 63 corresponds to ~1 degree at 4K resolution and 1.5H)
 - `topk` (min: 0.0001, max: 1.0, default: 0.6): Ratio of pixels for the spatial pooling computation.
-- `tvi_threshold` (min: 0.0001, max: 1.0, default: 0.019): Visibilty threshold for luminance `ΔL < tvi_threshold*L_mean` for BT.1886.
+- `tvi_threshold` (min: 0.0001, max: 1.0, default: 0.019): Visibility threshold for luminance `ΔL < tvi_threshold*L_mean` for BT.1886.
 - `scores` (default: False): if True, for scale i (0 <= i < 5), the GRAYS c-score frame will be stored as frame property `"CAMBI_SCALE%d" % i`.
 - `scaling`: scaling factor used to normalize the c-scores for each scale returned when `scores=True`.
 
@@ -75,11 +75,12 @@ This works just like [`std.Expr`](http://www.vapoursynth.com/doc/functions/expr.
   - The `boundary` argument specifies the default boundary condition for all relative pixel accesses without explicit specification:
     - 0 means clamped
     - 1 means mirrored
-- (\*) Dynamic pixel access using absolute coordinates. Use `absX absY x[]` to access the pixel (absX, absY) in the current frame of clip x. absX and absY can be computed using arbitrary expressions, and they are clamped to be within their respecitive ranges (i.e. boundary pixels are repeated indefinitely.) Only use this as a last resort as the performance is likely worse than static relative pixel access, depending on access pattern.
+- (\*) Dynamic pixel access using absolute coordinates. Use `absX absY x[]` to access the pixel (absX, absY) in the current frame of clip x. absX and absY can be computed using arbitrary expressions, and they are clamped to be within their respective ranges (i.e. boundary pixels are repeated indefinitely.) Only use this as a last resort as the performance is likely worse than static relative pixel access, depending on access pattern.
 - (\*) Bitwise operators (`bitand`, `bitor`, `bitxor`, `bitnot`): they operate on <24b integer clips by default. If you want to process 24-32 bit integer clips, you must set `opt=1` to force integer evaluation as much as possible (but beware that 32-bit signed integer overflow will wraparound.)
 - Support more bases for constants
   - hexadecimals: 0x123 or 0x123.4p5
   - octals: 023 (however, invalid octal numbers will be parsed as floating points, so "09" will be parsed the same as "9.0")
+- (\*) Support **arbitrary** number of input clips. Use `srcN` to access the `N`-th input clip (i.e. `src0` is equivalent to `x`, `src25` is equivalent to `w`, etc.) There is no hardcoded limit on the number of input clips, however VS might not be able to handle too many. Up to `255` input clips have been tested.
 
 Select
 ----
@@ -104,6 +105,29 @@ x = core.akarin.Select([src, flt], prop_clip, 'x._Combed 1 0 ?') # when x._Combe
 ```
 
 
+PropExpr
+----
+
+`akarin.PropExpr(clip[] clips, dict=lambda: dict(key=val))`
+
+`PropExpr` is a filter to programmatically compute numeric frame properties. Given a list of clips, it will return the first clip after modifying its frame properties as specified by the dict argument. The expressions have access the frame property of all the clips.
+
+`dict` is a Python lambda that returns a Python dict, where each key specifies the expression that evaluates to the new value for the frame property of the same name. The expression supports all operators supported by `Select` (i.e. no support for pixel access operators.)
+
+For each `val`, there are three cases:
+- an integer, or a float: the property `key` will be set to that value.
+- an empty string: the property `key` will be removed.
+- an expression string: the result of evaluating the expression specifies the value of property `key`.
+
+Some examples:
+- `PropExpr(c, lambda: dict(_FrameNumber='N'))`: this set the `_FrameNumber` frame property to the current frame number.
+- `PropExpr(c, lambda: dict(A=1, B=2.1, C="x.Prop 2 *"))`: this set property `A` to constant 1, `B` to 2.1 and `C` to be the value returned by the expression `x.Prop 2 *`, which is two times the value of the existing `Prop` property.
+- `PropExpr(c, lambda: dict(ToBeDeleted=''))`: this deletes the frame property `ToBeDeleted` (no error if it does not exist.)
+- `PropExpr(c, lambda: dict(A='x.B', B='x.A'))`: this swaps the value of property `A` and `B` as all frame property updates are performed atomically.
+
+Note: this peculiar form of specifying the properties is to workaround a limitation of the VS API.
+
+
 Version
 ----
 
@@ -126,6 +150,7 @@ Use this function to query the version and features of the plugin. It will retur
  b'sort', # sortN support
  b'x[]',  # dynamic pixel access
  b'bitand', b'bitor', b'bitxor', b'bitnot', # bitwise operators
+ b'src0', b'src26', # arbitrary number of input clips supported
 ]
 ```
 
