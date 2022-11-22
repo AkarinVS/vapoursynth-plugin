@@ -18,9 +18,11 @@ DLVFX
 -----
 `akarin.DLVFX(clip clip, int op[, float scale=1, float strength=0, int output_depth=clip.format.bits_per_sample, int num_streams=1])`
 
-There are three operation modes:
-- `op=0`: artefact reduction. `int strength` controls the strength.
-- `op=1`: super resolution, `scale>1` controls the scale factor. `int strength` controls the enhancement strength.
+There are three operation modes ([official docs](https://docs.nvidia.com/deeplearning/maxine/pdf/vfx-sdk-programming-guide.pdf)):
+- `op=0`: artefact reduction. `int strength` controls the strength (only 0 or 1 allowed).
+   input requirements: `90 <= height <= 1080`, `256 <= width <= 1920+128`, `width % 128 == 0`.
+- `op=1`: super resolution, `scale>1` controls the scale factor. `int strength` controls the enhancement strength (only 0 or 1 allowed).
+   input requirements: see Table 1 (Scale and Resolution Support for Input Videos) in [official SDK docs](https://docs.nvidia.com/deeplearning/maxine/pdf/vfx-sdk-programming-guide.pdf), and `width >= 256`, `width % 128 == 0`, `height >= 90`.
 - `op=2`: denoising. `float strength` controls the strength. (Not working.)
 
 Usage Notes:
@@ -88,7 +90,7 @@ Select
 `akarin.Select(clip[] clip_src, clip[] prop_src, string[] expr)`
 
 For each frame evaluate the expression `expr` where clip variables (`a-z`) references the corresponding frame from `prop_src`.
-The result of the evaluation is used as an index to pick a clip from `clip_src` array which is used to satisfy the current frame requestion.
+The result of the evaluation is used as an index to pick a clip from `clip_src` array which is used to satisfy the current frame request.
 
 It could be used to replace common uses of `std.FrameEval` where you want to evaluate some metrics and then choose one of the clip to use.
 
