@@ -253,11 +253,14 @@ static void VS_CC vfxCreate(const VSMap *in, VSMap *out, void *userData, VSCore 
             CK_VFX(NvVFX_CudaStreamCreate(&d->stream));
             CK_VFX(NvVFX_SetCudaStream(d->vfx, NVVFX_CUDA_STREAM, d->stream));
 
-            if (op == OP_AR || op == OP_SUPERRES)
+            if (op == OP_AR || op == OP_SUPERRES) {
                 r = NvVFX_SetU32(d->vfx, NVVFX_STRENGTH, int(d->strength));
-            else if (op == OP_DENOISE)
+                if (r != NVCV_SUCCESS)
+                    r = NvVFX_SetU32(d->vfx, NVVFX_MODE, int(d->strength));
+            } else if (op == OP_DENOISE)
                 r = NvVFX_SetF32(d->vfx, NVVFX_STRENGTH, d->strength);
-            else assert(false);
+            else
+                throw std::runtime_error("unknown op " + std::to_string(op));
             if (r != NVCV_SUCCESS) {
                 const char *err = NvCV_GetErrorStringFromCode(r);
                 fprintf(stderr, "NvVFX set strength failed: %x (%s)\n", r, err);
