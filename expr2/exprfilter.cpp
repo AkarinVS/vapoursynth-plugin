@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cctype>
+#include <clocale>
 #include <functional>
 #include <limits>
 #include <map>
@@ -1515,6 +1516,9 @@ static void VS_CC exprCreate(const VSMap *in, VSMap *out, void *userData, VSCore
 }
 
 static void initExpr() {
+#ifndef _WIN32
+    std::setlocale(LC_NUMERIC, "C");
+#endif
     auto cfg = rr::Config::Edit()
         .set(rr::Optimization::Level::Aggressive)
         .set(rr::Optimization::FMF::FastMath)
