@@ -113,7 +113,7 @@ PropExpr
 
 `akarin.PropExpr(clip[] clips, dict=lambda: dict(key=val))`
 
-`PropExpr` is a filter to programmatically compute numeric frame properties. Given a list of clips, it will return the first clip after modifying its frame properties as specified by the dict argument. The expressions have access the frame property of all the clips.
+`PropExpr` is a filter to programmatically compute numeric frame properties. Given a list of clips, it will return the first clip after modifying its frame properties as specified by the dict argument. The expressions have access to the frame property of all the clips.
 
 `dict` is a Python lambda that returns a Python dict, where each key specifies the expression that evaluates to the new value for the frame property of the same name. The expression supports all operators supported by `Select` (i.e. no support for pixel access operators.)
 
@@ -129,6 +129,34 @@ Some examples:
 - `PropExpr(c, lambda: dict(A='x.B', B='x.A'))`: this swaps the value of property `A` and `B` as all frame property updates are performed atomically.
 
 Note: this peculiar form of specifying the properties is to workaround a limitation of the VS API.
+
+
+Text
+----
+
+Text is an enhanced `text.Text`:
+- It takes Python format string so that the text for each frame can be based on frame properties. No need to resort to `std.FrameEval` and dynamic `text.Text` filter creation. But note this filter by itself does not support any computation on the frame properties, so if you want to display, say, `x.Prop1 * 10 + y.Prop2`, you will have to use `PropExpr` before hand to compute the value (e.g. `c.akarin.PropExpr(lambda: dict(PropToShow="x.Prop1 10 * y.Prop2 +")).akarin.Text("{PropToShow}")`).
+- It also support saving the formated string as a frame property (via `prop` argument), so that you can pass the formatted string to other filters (e.g. assrender).
+
+`akarin.Text(clip[] clips, string format[, int alignment=7, int scale=1, string prop, bint strict=0, bint vspipe=0])`
+
+`clips` are the input clips, the output will come from the first clip. It has the same restrictions are the `text.Text` filter (YUV/Gray/RGB, 8-16 bit integer or 32-bit float format).
+
+`format` is a Python `f""`-style format string. The filter internally uses a slightly modified [{fmt}](https://fmt.dev), so please refer to [{fmt}'s syntax docs](https://fmt.dev/latest/syntax.html) for details. Properties can be specified as in `Expr`/`Select`/`PropExpr`. As a special shorthand, `{Prop}` is an alias for `{x.Prop}`. Some simple examples:
+  - `{}` or `{N}`: the unamed paramenter (or `N`) is the current frame number.
+  - `"Matrix: {x._Matrix}"`: it will show the matrix property in string format (i.e. `Matrix: BT.709`).
+  - `"Matrix: {x._Matrix:d}"`: it will show the matrix property as a number.
+  - `"Chroma: {x._ChromaLocation:.>10s}`: it will show the chroma location as a string, right aligned, and padded on the left with '.' (i.e. `Chroma: ......Left`).
+
+The filter supports formatting int/float scalar or arrays, data (shown as string). All the rest are shown as type sepcific placeholders (e.g. `<node>` for a node).
+
+`alignment` and `scale` arguments serve the role as in `text.Text`.
+
+`prop`, if set, will make the filter set the specified frame property as the formatted string, and *not* overlay the string onto the frame.
+
+`strict`, if set to `True`, will abort the encoding process if format fails for any frame (due to incorrect format string, but not missing properties.)
+
+`vspipe` is reserved for now.
 
 
 Version
@@ -156,6 +184,8 @@ Use this function to query the version and features of the plugin. It will retur
  b'src0', b'src26', # arbitrary number of input clips supported
 ]
 ```
+- `select_features`: a list of features for the `Select` filter.
+- `text_features`: a list of features for the `Text` filter.
 
 There are two implementations:
 1. The legacy jitasm based one (deprecated, and no longer developed)

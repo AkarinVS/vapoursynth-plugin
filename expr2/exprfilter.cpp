@@ -38,7 +38,7 @@
 #include <vector>
 #include "VapourSynth.h"
 #include "VSHelper.h"
-#include "version.h"
+#include "../plugin.h"
 
 #include "Module.hpp"
 #include "Debug.hpp"
@@ -1926,6 +1926,9 @@ static void VS_CC selectCreate(const VSMap *in, VSMap *out, void *userData, VSCo
             }
             if (!isSameFormat(vi[0], vi[i]))
                 throw std::runtime_error("All src inputs must have the same format");
+
+            if (vi[i]->numFrames != vi[0]->numFrames)
+                throw std::runtime_error("all src inputs must be of the same length");
         }
 
         d->numPropInputs = vsapi->propNumElements(in, "prop_src");
@@ -2161,7 +2164,6 @@ static void VS_CC propExprCreate(const VSMap *in, VSMap *out, void *userData, VS
 
 void VS_CC versionCreate(const VSMap *in, VSMap *out, void *user_data, VSCore *core, const VSAPI *vsapi)
 {
-    vsapi->propSetData(out, "version", VERSION, -1, paAppend);
     vsapi->propSetData(out, "expr_backend", "llvm", -1, paAppend);
     for (const auto &f : features)
         vsapi->propSetData(out, "expr_features", f.c_str(), -1, paAppend);
@@ -2180,6 +2182,6 @@ void VS_CC exprInitialize(VSConfigPlugin configFunc, VSRegisterFunction register
     registerFunc("Expr", "clips:clip[];expr:data[];format:int:opt;opt:int:opt;boundary:int:opt;", exprCreate, nullptr, plugin);
     registerFunc("Select", "clip_src:clip[];prop_src:clip[];expr:data[];", selectCreate, nullptr, plugin);
     registerFunc("PropExpr", "clips:clip[];dict:func;", propExprCreate, nullptr, plugin);
-    registerFunc("Version", "", versionCreate, nullptr, plugin);
+    registerVersionFunc(versionCreate);
     initExpr();
 }

@@ -18,8 +18,8 @@
 * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 */
 
-#ifndef INTERNALFILTERS_H
-#define INTERNALFILTERS_H
+#ifndef EXPR_INTERNALFILTERS_H
+#define EXPR_INTERNALFILTERS_H
 
 #include "VapourSynth.h"
 

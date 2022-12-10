@@ -63,6 +63,10 @@ sources_banding = [
   #'banding/libvmaf/test_cambi.c',
 ]
 
+sources_text = [
+  'text/textfilter.cpp',
+]
+
 sources_common = [
   # main plugin
   'plugin.cpp',
@@ -94,6 +98,7 @@ if target_machine.system() == 'windows'
 endif
 
 sources += sources_banding
+sources += sources_text
 
 vapoursynth_dep = dependency('vapoursynth').partial_dependency(compile_args: true, includes: true)
 
