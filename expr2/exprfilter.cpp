@@ -102,6 +102,7 @@ std::vector<std::string> features = {
     "x[]",
     "bitand", "bitor", "bitxor", "bitnot",
     clipNamePrefix + "0", clipNamePrefix + "26",
+    "first-byte-of-bytes-property",
 };
 
 std::vector<std::string> selectFeatures = {
@@ -115,6 +116,7 @@ std::vector<std::string> selectFeatures = {
     "sort",
     "bitand", "bitor", "bitxor", "bitnot",
     clipNamePrefix + "0", clipNamePrefix + "26",
+    "first-byte-of-bytes-property",
     // extended features only available for Select.
     "argmin", "argmax", "argsort",
 };
@@ -1389,6 +1391,10 @@ static const VSFrameRef *VS_CC exprGetFrame(int n, int activationReason, void **
                 float val = vsapi->propGetInt(m, pa.name.c_str(), 0, &err);
                 if (err == peType)
                     val = vsapi->propGetFloat(m, pa.name.c_str(), 0, &err);
+                if (err == peType) {
+                    auto d = vsapi->propGetData(m, pa.name.c_str(), 0, &err);
+                    if (d) val = d[0];
+                }
                 if (err != 0)
                     val = std::nanf(""); // XXX: should we warn the user?
                 consts.push_back(val);
@@ -1833,6 +1839,10 @@ static const VSFrameRef *VS_CC selectGetFrame(int n, int activationReason, void 
             float val = vsapi->propGetInt(m, name.c_str(), 0, &err);
             if (err == peType)
                 val = vsapi->propGetFloat(m, name.c_str(), 0, &err);
+            if (err == peType) {
+                auto d = vsapi->propGetData(m, name.c_str(), 0, &err);
+                if (d) val = d[0];
+            }
             if (err != 0)
                 val = 0.0f; // XXX: non-existant property defaults to 0.
             return val;
@@ -2016,6 +2026,10 @@ static const VSFrameRef *VS_CC propExprGetFrame(int n, int activationReason, voi
             float val = vsapi->propGetInt(m, name.c_str(), 0, &err);
             if (err == peType)
                 val = vsapi->propGetFloat(m, name.c_str(), 0, &err);
+            if (err == peType) {
+                auto d = vsapi->propGetData(m, name.c_str(), 0, &err);
+                if (d) val = d[0];
+            }
             if (err != 0)
                 val = 0.0f; // XXX: non-existant property defaults to 0.
             return val;
