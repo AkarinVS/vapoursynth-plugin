@@ -156,7 +156,7 @@ The filter supports formatting int/float scalar or arrays, data (shown as string
 
 `strict`, if set to `True`, will abort the encoding process if format fails for any frame (due to incorrect format string, but not missing properties.)
 
-`vspipe` is reserved for now.
+`vspipe` will determine whether to overlay the OSD when the script is run under vspipe. The default `False` means the OSD will only be visible when the script is run in previewers, not when encoding with vspipe. The check is done by checking the executable name of the current process for "vspipe" (Unix) or "vspipe.exe" (Windows). This setting does not affect `prop`.
 
 
 Version

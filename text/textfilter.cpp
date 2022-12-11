@@ -30,6 +30,13 @@
 #include <VapourSynth.h>
 #include <VSHelper.h>
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
+
 #define FMT_HEADER_ONLY
 #include "fmt/args.h"
 #include "fmt/format.h"
@@ -647,6 +654,32 @@ static void pushArg(const PropAccess &pa, dynamic_format_arg_store &store, const
     }
 }
 
+bool isVspipe() {
+    static bool vspipe = []() -> bool {
+#ifdef _WIN32
+        const int l = sizeof("vspipe.exe") - 1;
+        WCHAR path[4096];
+        int n = GetModuleFileNameW(NULL, path, sizeof path / sizeof path[0]);
+        if (n < l) return false;
+        return _wcsicmp(&path[n - l], L"vspipe.exe") == 0;
+#elif defined(__linux__)
+        const int l = sizeof("vspipe") - 1;
+        char path[4096];
+        memset(path, 0, sizeof path);
+        int n = readlink("/proc/self/exe", path, sizeof path);
+        path[sizeof path - 1] = '\0';
+        if (n < l) return false;
+        return strcmp(&path[n - l], "vspipe") == 0;
+#elif defined(__APPLE__)
+        const char *pn = getprogname();
+        return strcmp(pn, "vspipe") == 0;
+#else
+#error "Missing isVspipe() implementation"
+#endif
+    }();
+    return vspipe;
+}
+
 static const VSFrameRef *VS_CC textGetFrame(int n, int activationReason, void **instanceData, void **frameData, VSFrameContext *frameCtx, VSCore *core, const VSAPI *vsapi) {
     TextData *d = static_cast<TextData *>(*instanceData);
 
@@ -705,7 +738,7 @@ static const VSFrameRef *VS_CC textGetFrame(int n, int activationReason, void **
         }
 
         VSFrameRef *dst = vsapi->copyFrame(src, core);
-        if (d->propName.size() == 0) {
+        if (d->propName.size() == 0 && (d->vspipe || !isVspipe())) {
             scrawl_text(std::string(out.data(), out.size()), d->alignment, d->scale, dst, vsapi);
         } else {
             VSMap *map = vsapi->getFramePropsRW(dst);
