@@ -143,7 +143,7 @@ Text is an enhanced `text.Text`:
 `clips` are the input clips, the output will come from the first clip. It has the same restrictions are the `text.Text` filter (YUV/Gray/RGB, 8-16 bit integer or 32-bit float format).
 
 `format` is a Python `f""`-style format string. The filter internally uses a slightly modified [{fmt}](https://fmt.dev), so please refer to [{fmt}'s syntax docs](https://fmt.dev/latest/syntax.html) for details. Properties can be specified as in `Expr`/`Select`/`PropExpr`. As a special shorthand, `{Prop}` is an alias for `{x.Prop}`. Some simple examples:
-  - `{}` or `{N}`: the unamed paramenter (or `N`) is the current frame number.
+  - `{N}`: The predefined `N` is the current frame number (if you want to access a frame property named `N`, use the full form `{x.N}` instead.
   - `"Matrix: {x._Matrix}"`: it will show the matrix property in string format (i.e. `Matrix: BT.709`).
   - `"Matrix: {x._Matrix:d}"`: it will show the matrix property as a number.
   - `"Chroma: {x._ChromaLocation:.>10s}`: it will show the chroma location as a string, right aligned, and padded on the left with '.' (i.e. `Chroma: ......Left`).
