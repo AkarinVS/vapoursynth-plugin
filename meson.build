@@ -65,6 +65,7 @@ sources_banding = [
 
 sources_text = [
   'text/textfilter.cpp',
+  'text/tmplfilter.cpp',
 ]
 
 sources_common = [
@@ -73,10 +74,11 @@ sources_common = [
 ]
 
 deps = []
+incdir = [include_directories('text')]
 
 if use_asmjit
   sources = sources_common + sources_expr
-  incdir = include_directories('.')
+  incdir += include_directories('.')
   if host_machine.cpu_family().startswith('x86')
     add_project_arguments('-DVS_TARGET_CPU_X86', '-mavx', language: 'cpp')
   else
@@ -84,7 +86,7 @@ if use_asmjit
   endif
 else
   sources = sources_common + sources_expr2
-  incdir = include_directories('expr2/reactor')
+  incdir += include_directories('expr2/reactor')
   deps += dependency('llvm', version: ['>= 10.0', '< 14'], method: 'config-tool', static: get_option('static-llvm'),
     modules: [
       'asmprinter', 'executionengine', 'target', 'orcjit', 'native',

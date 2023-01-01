@@ -36,4 +36,5 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit(VSConfigPlugin configFunc, VSRegiste
 #endif
     bandingInitialize(configFunc, registerFunc, plugin);
     textInitialize(configFunc, registerFunc, plugin);
+    tmplInitialize(configFunc, registerFunc, plugin);
 }
