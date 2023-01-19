@@ -182,6 +182,8 @@ Use this function to query the version and features of the plugin. It will retur
  b'x[]',  # dynamic pixel access
  b'bitand', b'bitor', b'bitxor', b'bitnot', # bitwise operators
  b'src0', b'src26', # arbitrary number of input clips supported
+ b'first-byte-of-bytes-property', # can access the first byte of bytes property, e.g. x._PictType
+ b'fp16', # 16-bit floating point format support
 ]
 ```
 - `select_features`: a list of features for the `Select` filter.
