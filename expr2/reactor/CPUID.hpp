@@ -37,6 +37,7 @@ public:
 	static bool supportsSSSE3();
 	static bool supportsSSE4_1();
 	static bool supportsAVX();
+	static bool supportsF16C();
 
 	static void setEnableMMX(bool enable);
 	static void setEnableCMOV(bool enable);
@@ -46,6 +47,7 @@ public:
 	static void setEnableSSSE3(bool enable);
 	static void setEnableSSE4_1(bool enable);
 	static void setEnableAVX(bool enable);
+	static void setEnableF16C(bool enable);
 
 private:
 	static bool MMX;
@@ -56,6 +58,7 @@ private:
 	static bool SSSE3;
 	static bool SSE4_1;
 	static bool AVX;
+	static bool F16C;
 
 	static bool enableMMX;
 	static bool enableCMOV;
@@ -65,6 +68,7 @@ private:
 	static bool enableSSSE3;
 	static bool enableSSE4_1;
 	static bool enableAVX;
+	static bool enableF16C;
 
 	static bool detectMMX();
 	static bool detectCMOV();
@@ -74,6 +78,7 @@ private:
 	static bool detectSSSE3();
 	static bool detectSSE4_1();
 	static bool detectAVX();
+	static bool detectF16C();
 };
 
 }  // namespace rr
@@ -125,6 +130,11 @@ inline bool CPUID::supportsSSE4_1()
 inline bool CPUID::supportsAVX()
 {
 	return AVX && enableAVX;
+}
+
+inline bool CPUID::supportsF16C()
+{
+	return F16C && enableF16C;
 }
 
 }  // namespace rr

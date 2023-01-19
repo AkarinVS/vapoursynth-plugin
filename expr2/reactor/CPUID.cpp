@@ -37,6 +37,7 @@ bool CPUID::SSE3 = detectSSE3();
 bool CPUID::SSSE3 = detectSSSE3();
 bool CPUID::SSE4_1 = detectSSE4_1();
 bool CPUID::AVX = detectAVX();
+bool CPUID::F16C = detectF16C();
 
 bool CPUID::enableMMX = true;
 bool CPUID::enableCMOV = true;
@@ -46,6 +47,7 @@ bool CPUID::enableSSE3 = true;
 bool CPUID::enableSSSE3 = true;
 bool CPUID::enableSSE4_1 = true;
 bool CPUID::enableAVX = true;
+bool CPUID::enableF16C = true;
 
 void CPUID::setEnableMMX(bool enable)
 {
@@ -178,6 +180,11 @@ void CPUID::setEnableAVX(bool enable)
 	}
 }
 
+void CPUID::setEnableF16C(bool enable)
+{
+	enableF16C = enable;
+}
+
 static void cpuid(int registers[4], int info)
 {
 #if defined(__i386__) || defined(__x86_64__)
@@ -257,6 +264,13 @@ bool CPUID::detectSSE4_1()
 	int registers[4];
 	cpuid(registers, 1);
 	return SSE4_1 = (registers[2] & 0x00080000) != 0;
+}
+
+bool CPUID::detectF16C()
+{
+	int registers[4];
+	cpuid(registers, 1);
+	return F16C = (registers[2] & 0x20000000) != 0;
 }
 
 bool CPUID::detectAVX()

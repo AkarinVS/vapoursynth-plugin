@@ -30,7 +30,9 @@
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/Alignment.h"
 #include "llvm/Support/ManagedStatic.h"
+#if LLVM_VERSION_MAJOR < 15
 #include "llvm/Transforms/Coroutines.h"
+#endif
 #include "llvm/Transforms/IPO.h"
 #include "llvm/Transforms/Scalar.h"
 
@@ -614,13 +616,13 @@ std::shared_ptr<Routine> Nucleus::acquireRoutine(const char *name, const Config:
 			jit->module->print(file, 0);
 		}
 
-#if defined(ENABLE_RR_LLVM_IR_VERIFICATION) || !defined(NDEBUG)
+#if (defined(ENABLE_RR_LLVM_IR_VERIFICATION) || !defined(NDEBUG)) && LLVM_VERSION_MAJOR < 14
 		{
 			llvm::legacy::PassManager pm;
 			pm.add(llvm::createVerifierPass());
 			pm.run(*jit->module);
 		}
-#endif  // defined(ENABLE_RR_LLVM_IR_VERIFICATION) || !defined(NDEBUG)
+#endif  // (defined(ENABLE_RR_LLVM_IR_VERIFICATION) || !defined(NDEBUG)) && LLVM_VERSION_MAJOR < 14
 
 		jit->optimize(cfg);
 
@@ -4845,6 +4847,7 @@ std::shared_ptr<Routine> Nucleus::acquireCoroutine(const char *name, const Confi
 		jit->module->print(file, 0);
 	}
 
+#if LLVM_VERSION_MAJOR < 14
 	if(isCoroutine)
 	{
 		// Run manadory coroutine transforms.
@@ -4866,6 +4869,7 @@ std::shared_ptr<Routine> Nucleus::acquireCoroutine(const char *name, const Confi
 		pm.run(*jit->module);
 	}
 #endif  // defined(ENABLE_RR_LLVM_IR_VERIFICATION) || !defined(NDEBUG)
+#endif  // LLVM_VERSION_MAJOR < 14
 
 	auto cfg = cfgEdit.apply(jit->config);
 	jit->optimize(cfg);
@@ -4963,6 +4967,49 @@ RValue<FloatT> FMA(RValue<FloatT> a, RValue<FloatT> b, RValue<FloatT> c)
 
 	return As<FloatT>(V(jit->builder->CreateCall(intrinsic, { va, vb, vc })));
 }
+
+RValue<Float8> TryFP16To32(RValue<UShort8> x, bool &ok)
+{
+	Float8 res = 0;
+	ok = false;
+#if (defined(__i386__) || defined(__x86_64__)) && LLVM_VERSION_MAJOR < 11
+	// LLVM 11+ removed this intrinsic.
+	if (!CPUID::supportsF16C() || !CPUID::supportsAVX())
+		return res;
+	ok = true;
+	llvm::Value *vx = V(x.value());
+	llvm::Function *intrinsic = llvm::Intrinsic::getDeclaration(jit->module.get(), llvm::Intrinsic::x86_vcvtph2ps_256, {});
+	return As<Float8>(V(jit->builder->CreateCall(intrinsic, { vx })));
+#elif LLVM_VERSION_MAJOR >= 11
+	ok = true;
+	auto halfType = llvm::Type::getHalfTy(*jit->context);
+	auto halfVecType = llvm::VectorType::get(halfType, llvm::cast<llvm::FixedVectorType>(V(x.value())->getType())->getNumElements(), false);
+	auto xh = jit->builder->CreateBitCast(V(x.value()), halfVecType);
+	return As<Float8>(V(jit->builder->CreateFPExt(xh, T(Float8::type()), "half2flt")));
+#endif
+	return res;
+}
+RValue<UShort8> TryFP32To16(RValue<Float8> x, bool &ok)
+{
+	UShort8 res = 0;
+	ok = false;
+#if (defined(__i386__) || defined(__x86_64__)) && LLVM_VERSION_MAJOR < 11
+	if (!CPUID::supportsF16C() || !CPUID::supportsAVX())
+		return res;
+	ok = true;
+	llvm::Value *vx = V(x.value());
+	llvm::Value *zero = llvm::Constant::getNullValue(llvm::IntegerType::get(*jit->context, sizeof(int) * 8));
+	llvm::Function *intrinsic = llvm::Intrinsic::getDeclaration(jit->module.get(), llvm::Intrinsic::x86_vcvtps2ph_256, {});
+	return As<UShort8>(V(jit->builder->CreateCall(intrinsic, { vx, zero })));
+#elif LLVM_VERSION_MAJOR >= 11
+	ok = true;
+	auto halfType = llvm::Type::getHalfTy(*jit->context);
+	auto halfVecType = llvm::VectorType::get(halfType, llvm::cast<llvm::FixedVectorType>(V(x.value())->getType())->getNumElements(), false);
+	return As<UShort8>(V(jit->builder->CreateFPTrunc(V(x.value()), halfVecType, "flt2half")));
+#endif
+	return res;
+}
+
 
 // specialize for all float types
 #define SPECIALIZE(type) \

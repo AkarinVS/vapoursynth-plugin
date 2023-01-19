@@ -2709,6 +2709,9 @@ RValue<Float8> Max(RValue<Float8> x, RValue<Float8> y);
 RValue<Float8> Min(RValue<Float8> x, RValue<Float8> y);
 static inline RValue<Float8> FMA(RValue<Float8> a, RValue<Float8> b, RValue<Float8> c) { return FMA<Float8>(a, b, c); }
 
+RValue<Float8> TryFP16To32(RValue<UShort8>, bool &ok);
+RValue<UShort8> TryFP32To16(RValue<Float8>, bool &ok);
+
 // Deprecated: use Rcp
 // TODO(b/147516027): Remove when GLES frontend is removed
 //RValue<Float8> Rcp_pp(RValue<Float8> val, bool exactAtPow2 = false);
@@ -3069,9 +3072,9 @@ RValue<Pointer<T>> LValue<T>::operator&()
 
 template<class T>
 Reference<T>::Reference(Value *pointer, int alignment)
-    : alignment(alignment)
+    : address(pointer)
+    , alignment(alignment)
 {
-	address = pointer;
 }
 
 template<class T>

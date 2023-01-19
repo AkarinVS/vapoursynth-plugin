@@ -103,6 +103,7 @@ std::vector<std::string> features = {
     "bitand", "bitor", "bitxor", "bitnot",
     clipNamePrefix + "0", clipNamePrefix + "26",
     "first-byte-of-bytes-property",
+    "fp16",
 };
 
 std::vector<std::string> selectFeatures = {
@@ -484,6 +485,8 @@ class Compiler {
     rr::RValue<FloatV> Exp_(rr::RValue<FloatV>);
     rr::RValue<FloatV> Log_(rr::RValue<FloatV>);
     rr::RValue<FloatV> SinCos_(rr::RValue<FloatV>, bool issin);
+    rr::RValue<FloatV> FP16To32(rr::RValue<UShortV>);
+    rr::RValue<UShortV> FP32To16(rr::RValue<FloatV>);
 
     class Value {
         std::variant<IntV, FloatV> v;
@@ -676,6 +679,51 @@ rr::RValue<typename Compiler<lanes>::FloatV> Compiler<lanes>::SinCos_(rr::RValue
     }
     // Apply sign.
     return As<FloatV>(sign ^ As<IntV>(t1));
+}
+
+template<int lanes>
+rr::RValue<typename Compiler<lanes>::FloatV> Compiler<lanes>::FP16To32(rr::RValue<typename Compiler<lanes>::UShortV> x_)
+{
+    bool ok;
+    FloatV r = rr::TryFP16To32(x_, ok);
+    if (ok) return r;
+
+    using namespace rr;
+    FloatV magic = As<FloatV>(IntV((254 - 15) << 23));
+    FloatV inf16 = As<FloatV>(IntV((127 + 16) << 23));
+    IntV ti = IntV(x_);
+    IntV sign = (ti & IntV(0x8000)) << 16;
+    ti = (ti & IntV(0x7fff)) << 13;
+    FloatV tf = As<FloatV>(ti) * magic;
+    ti = As<IntV>(tf);
+    IntV infmask = CmpGE(tf, inf16);
+    infmask = infmask & IntV(255 << 23);
+    ti = ti | infmask | sign;
+    return As<FloatV>(ti);
+}
+
+template<int lanes>
+rr::RValue<typename Compiler<lanes>::UShortV> Compiler<lanes>::FP32To16(rr::RValue<typename Compiler<lanes>::FloatV> x_)
+{
+    bool ok;
+    UShortV r = rr::TryFP32To16(x_, ok);
+    if (ok) return r;
+
+    using namespace rr;
+    IntV f32infty = IntV(255 << 23);
+    FloatV f16max = As<FloatV>(IntV((127 + 16) << 23));
+    FloatV magic = As<FloatV>(IntV(15 << 23));
+    IntV expinf = IntV((255 ^ 31) << 23);
+    IntV ti = As<IntV>(x_);
+    IntV signmask = IntV(0x80000000);
+    IntV sign = ti & signmask;
+    ti = ti ^ sign;
+    sign = sign >> 16;
+    IntV nanmask = CmpEQ(ti & f32infty, f32infty);
+    IntV ifnan = ti ^ expinf;
+    IntV normal = As<IntV>(Min(As<FloatV>(ti), f16max) * magic);
+    ti = (nanmask & ifnan) | (~nanmask & normal);
+    return UShortV((ti >> 13) | sign);
 }
 
 template<int lanes, typename VType>
@@ -910,9 +958,14 @@ void Compiler<lanes>::buildOneIter(const Helper &helpers, State &state)
                     OUT(v);
             } else if (format->sampleType == stFloat) {
                 FloatV v;
-                if (format->bytesPerSample == 2)
-                    abort(); // XXX: f16 not supported
-                else if (format->bytesPerSample == 4) {
+                if (format->bytesPerSample == 2) {
+                    UShortV vi;
+                    if (regularLoad)
+                        vi = *Pointer<UShortV>(p, (unaligned ? 1:lanes)*sizeof(uint16_t));
+                    else
+                        vi = Gather(Pointer<UShort>(p), offsets, IntV(~0), sizeof(uint16_t));
+                    v = FP16To32(vi);
+                } else if (format->bytesPerSample == 4) {
                     if (regularLoad)
                         v = *Pointer<FloatV>(p, (unaligned ? 1:lanes)*sizeof(float));
                     else
@@ -1029,9 +1082,10 @@ void Compiler<lanes>::buildOneIter(const Helper &helpers, State &state)
                     OUT(v);
             } else if (format->sampleType == stFloat) {
                 FloatV v;
-                if (format->bytesPerSample == 2)
-                    abort(); // XXX: f16 not supported
-                else if (format->bytesPerSample == 4)
+                if (format->bytesPerSample == 2) {
+                    UShortV vi = Gather(Pointer<UShort>(p), offsets, IntV(~0), sizeof(uint16_t));
+                    v = FP16To32(vi);
+                } else if (format->bytesPerSample == 4)
                     v = Gather(Pointer<Float>(p), offsets, IntV(~0), sizeof(float));
                 OUT(v);
             }
@@ -1197,9 +1251,10 @@ void Compiler<lanes>::buildOneIter(const Helper &helpers, State &state)
         else if (format->bytesPerSample == 4)
             *Pointer<IntV>(p, lanes*sizeof(uint32_t)) = rounded;
     } else if (format->sampleType == stFloat) {
-        if (format->bytesPerSample == 2) // XXX: f16 not supported.
-            abort();
-        else if (format->bytesPerSample == 4)
+        if (format->bytesPerSample == 2) {
+            UShortV vi = FP32To16(res.ensureFloat());
+            *Pointer<UShortV>(p, lanes*sizeof(uint16_t)) = vi;
+        } else if (format->bytesPerSample == 4)
             *Pointer<FloatV>(p, lanes*sizeof(float)) = res.ensureFloat();
     }
 }
@@ -1424,8 +1479,6 @@ static void VS_CC exprCreate(const VSMap *in, VSMap *out, void *userData, VSCore
     std::unique_ptr<ExprData> d(new ExprData);
     int err;
 
-#define EXPR_F16C_TEST (false)
-
     try {
         d->numInputs = vsapi->propNumElements(in, "clips");
 
@@ -1452,15 +1505,9 @@ static void VS_CC exprCreate(const VSMap *in, VSMap *out, void *userData, VSCore
             }
 
             int bits = vi[i]->format->bitsPerSample;
-            if (EXPR_F16C_TEST) {
-                if (((bits > 32 || (bits > 16 && bits < 32)) && vi[i]->format->sampleType == stInteger)
-                    || (bits != 16 && bits != 32 && vi[i]->format->sampleType == stFloat))
-                    throw std::runtime_error("Input clips must be 8-16/32 bit integer or 16/32 bit float format");
-            } else {
-                if (((bits > 32 || (bits > 16 && bits < 32)) && vi[i]->format->sampleType == stInteger)
-                    || (bits != 32 && vi[i]->format->sampleType == stFloat))
-                    throw std::runtime_error("Input clips must be 8-16/32 bit integer or 32 bit float format");
-            }
+            if (((bits > 32 || (bits > 16 && bits < 32)) && vi[i]->format->sampleType == stInteger)
+                || (bits != 16 && bits != 32 && vi[i]->format->sampleType == stFloat))
+                throw std::runtime_error("Input clips must be 8-16/32 bit integer or 16/32 bit float format");
         }
 
         d->vi = *vi[0];
