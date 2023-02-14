@@ -1,3 +1,4 @@
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <utility>
@@ -14,7 +15,7 @@
 #else
 static std::vector<std::string> autoDllErrors;
 static const wchar_t *dllPath(const wchar_t *suffix);
-#define NGX_DLL dllPath(L".dlisr.dll"),".dlisr.dll",autoDllErrors
+#define NGX_DLL dllPath(L"dlisr.dll"),".dlisr.dll",autoDllErrors
 #define CUDA_DLL L"nvcuda.dll","nvcuda.dll",autoDllErrors
 #endif
 #include "cuda.h"
@@ -47,8 +48,10 @@ static const wchar_t *dllPath(const wchar_t *suffix) {
                 n = GetModuleFileNameW(mod, buf.data(), buf.size());
             } while (n >= buf.size());
             buf.resize(n);
-            std::wstring path(buf.begin(), buf.end() - 4);
-            path += suffix;
+            std::wstring stem(buf.begin(), buf.end() - 4);
+            std::wstring path = stem + L"." + suffix;
+            if (std::filesystem::exists(path)) return path;
+            path = stem + L"/" + suffix;
             return path;
         }
         throw std::runtime_error("unable to locate myself");
