@@ -122,11 +122,14 @@ For each `val`, there are three cases:
 - an empty string: the property `key` will be removed.
 - an expression string: the result of evaluating the expression specifies the value of property `key`.
 
+Additionally, `val` could be an array, and each output frame will use subsequent element of the array (wrap around to the first).
+
 Some examples:
 - `PropExpr(c, lambda: dict(_FrameNumber='N'))`: this set the `_FrameNumber` frame property to the current frame number.
 - `PropExpr(c, lambda: dict(A=1, B=2.1, C="x.Prop 2 *"))`: this set property `A` to constant 1, `B` to 2.1 and `C` to be the value returned by the expression `x.Prop 2 *`, which is two times the value of the existing `Prop` property.
 - `PropExpr(c, lambda: dict(ToBeDeleted=''))`: this deletes the frame property `ToBeDeleted` (no error if it does not exist.)
 - `PropExpr(c, lambda: dict(A='x.B', B='x.A'))`: this swaps the value of property `A` and `B` as all frame property updates are performed atomically.
+- `PropExpr(c, lambda: dict(C=[0, 1, 2]))`: output frame `i` will have frame property `C` set to `i%3`.
 
 Note: this peculiar form of specifying the properties is to workaround a limitation of the VS API.
 

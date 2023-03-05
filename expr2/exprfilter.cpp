@@ -2045,7 +2045,7 @@ static void VS_CC selectCreate(const VSMap *in, VSMap *out, void *userData, VSCo
 struct PropExprData {
     std::vector<VSNodeRef *> nodes;
     VSVideoInfo vi;
-    std::vector<std::pair<std::string, std::vector<ExprOp>>> ops;
+    std::vector<std::pair<std::string, std::vector<std::vector<ExprOp>>>> ops;
 
     PropExprData() : nodes(), vi(), ops() {}
 };
@@ -2093,7 +2093,7 @@ static const VSFrameRef *VS_CC propExprGetFrame(int n, int activationReason, voi
         std::vector<float> vals;
         // Two step atomic update
         for (const auto &pair: d->ops) {
-            const auto &ops = pair.second;
+            const auto &ops = pair.second[n % pair.second.size()];
             float x;
             try {
                 x = interpret(ops, n, d->vi.width, d->vi.height, -1 /* Y */, -1 /* X */,
@@ -2106,8 +2106,9 @@ static const VSFrameRef *VS_CC propExprGetFrame(int n, int activationReason, voi
         }
         VSMap *map = vsapi->getFramePropsRW(dst);
         for (size_t i = 0; i < d->ops.size(); i++) {
-            const auto &name = d->ops[i].first;
-            const auto &ops = d->ops[i].second;
+            const auto &pair = d->ops[i];
+            const auto &name = pair.first;
+            const auto &ops = pair.second[n % pair.second.size()];
             float v = vals[i];
 
             vsapi->propDeleteKey(map, name.c_str());
@@ -2166,43 +2167,51 @@ static void VS_CC propExprCreate(const VSMap *in, VSMap *out, void *userData, VS
             for (int i = 0; i < num_keys; i++) {
                 auto key = vsapi->propGetKey(out_map, i);
                 auto type = vsapi->propGetType(out_map, key);
-                std::string expr;
+                std::vector<std::string> exprs;
+                const int nelem = vsapi->propNumElements(out_map, key);
                 switch (type) {
                 case ptInt:
-                    expr = std::to_string(vsapi->propGetInt(out_map, key, 0, nullptr));
+                    for (int j = 0; j < nelem; j++)
+                        exprs.push_back(std::to_string(vsapi->propGetInt(out_map, key, j, nullptr)));
                     break;
                 case ptFloat:
-                    expr = std::to_string(vsapi->propGetFloat(out_map, key, 0, nullptr));
+                    for (int j = 0; j < nelem; j++)
+                        exprs.push_back(std::to_string(vsapi->propGetFloat(out_map, key, j, nullptr)));
                     break;
                 case ptData:
-                    expr = vsapi->propGetData(out_map, key, 0, nullptr);
+                    for (int j = 0; j < nelem; j++)
+                        exprs.push_back(vsapi->propGetData(out_map, key, j, nullptr));
                     break;
                 default:
                     throw std::runtime_error("invalid type for key " + std::string(key) + ", only int/float/str are supported");
                 }
 
-                std::vector<ExprOp> ops;
-                if (expr.size() != 0) {
-                    auto tokens = tokenize(expr);
-                    for (const auto &tok: tokens) {
-                        auto op = decodeToken(tok, true);
-                        ops.push_back(op);
-                    }
-                    try {
-                        (void)interpret(ops, 0, d->vi.width, d->vi.height, -1 /* Y */, -1 /* X */,
-                                  [key](const ExprOp &op, int y, int x) -> float { /* pixelGet */
-                                      throw std::runtime_error(std::string(key) + ": unable to use pixel values in PropExpr");
-                                  },
-                                  [key, numInputs](int index, const std::string &name) -> float { /* propGet */
-                                      if (index >= numInputs)
-                                          throw std::runtime_error(std::string(key) + ": property access clip out of range");
-                                      return 0.0f;
-                                  });
-                    } catch (std::runtime_error &e) {
-                        throw e;
+                std::vector<std::vector<ExprOp>> opss(exprs.size());
+                for (size_t i = 0; i < exprs.size(); i++) {
+                    const auto &expr = exprs[i];
+                    auto &ops = opss[i];
+                    if (expr.size() != 0) {
+                        auto tokens = tokenize(expr);
+                        for (const auto &tok: tokens) {
+                            auto op = decodeToken(tok, true);
+                            ops.push_back(op);
+                        }
+                        try {
+                            (void)interpret(ops, 0, d->vi.width, d->vi.height, -1 /* Y */, -1 /* X */,
+                                      [key](const ExprOp &op, int y, int x) -> float { /* pixelGet */
+                                          throw std::runtime_error(std::string(key) + ": unable to use pixel values in PropExpr");
+                                      },
+                                      [key, numInputs](int index, const std::string &name) -> float { /* propGet */
+                                          if (index >= numInputs)
+                                              throw std::runtime_error(std::string(key) + ": property access clip out of range");
+                                          return 0.0f;
+                                      });
+                        } catch (std::runtime_error &e) {
+                            throw e;
+                        }
                     }
                 }
-                d->ops.push_back({key, ops});
+                d->ops.emplace_back(key, std::move(opss));
             }
             vsapi->freeMap(out_map);
             vsapi->freeMap(in_map);
