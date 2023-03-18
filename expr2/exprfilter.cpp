@@ -1052,7 +1052,7 @@ void Compiler<lanes>::buildOneIter(const Helper &helpers, State &state)
 #define LOGICOP(op) { \
             LOAD2(l, r); \
             IntV li = l.isFloat() ? CmpGT(l.f(), FloatV(0.0)) : CmpGT(l.i(), IntV(0)); \
-            IntV ri = l.isFloat() ? CmpGT(r.f(), FloatV(0.0)) : CmpGT(r.i(), IntV(0)); \
+            IntV ri = r.isFloat() ? CmpGT(r.f(), FloatV(0.0)) : CmpGT(r.i(), IntV(0)); \
             auto x = op(li, ri); \
             OUT(x & IntV(1)); \
             break; \
