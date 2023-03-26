@@ -64,9 +64,9 @@ namespace {
 typedef std::vector<std::string> stringlist;
 } // namespace
 
-static void scrawl_character_int(unsigned char c, uint8_t *image, int stride, int dest_x, int dest_y, int bitsPerSample, int scale) {
-    int black = 16 << (bitsPerSample - 8);
-    int white = 235 << (bitsPerSample - 8);
+static void scrawl_character_int(unsigned char c, uint8_t *image, int stride, int dest_x, int dest_y, int bitsPerSample, int scale, bool full) {
+    int black = full ? 0 : (16 << (bitsPerSample - 8));
+    int white = full ? ((1L << bitsPerSample) - 1) : (235 << (bitsPerSample - 8));
     int x, y;
     if (bitsPerSample == 8) {
         for (y = 0; y < character_height * scale; y++) {
@@ -246,7 +246,7 @@ static void scrawl_text(std::string txt, int alignment, int scale, VSFrameRef *f
                     int stride = vsapi->getStride(frame, plane);
 
                     if (frame_format->sampleType == stInteger) {
-                        scrawl_character_int(iter[i], image, stride, dest_x, dest_y, frame_format->bitsPerSample, scale);
+                        scrawl_character_int(iter[i], image, stride, dest_x, dest_y, frame_format->bitsPerSample, scale, true);
                     } else {
                         scrawl_character_float(iter[i], image, stride, dest_x, dest_y, scale);
                     }
@@ -258,7 +258,11 @@ static void scrawl_text(std::string txt, int alignment, int scale, VSFrameRef *f
 
                     if (plane == 0) {
                         if (frame_format->sampleType == stInteger) {
-                            scrawl_character_int(iter[i], image, stride, dest_x, dest_y, frame_format->bitsPerSample, scale);
+                            const VSMap *m = vsapi->getFramePropsRO(frame);
+                            int err;
+                            bool full = vsapi->propGetInt(m, "_ColorRange", 0, &err) == 0;
+                            if (err) full = false; // for YUV, assuming limited unless specified otherwise
+                            scrawl_character_int(iter[i], image, stride, dest_x, dest_y, frame_format->bitsPerSample, scale, full);
                         } else {
                             scrawl_character_float(iter[i], image, stride, dest_x, dest_y, scale);
                         }
