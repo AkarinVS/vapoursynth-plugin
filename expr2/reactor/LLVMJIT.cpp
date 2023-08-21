@@ -149,9 +149,6 @@ JITGlobals *JITGlobals::get()
 	static JITGlobals instance = [] {
 		const char *argv[] = {
 			"Reactor",
-#if defined(__i386__) || defined(__x86_64__)
-			"-x86-asm-syntax=intel",  // Use Intel syntax rather than the default AT&T
-#endif
 #if LLVM_VERSION_MAJOR <= 12
 			"-warn-stack-size=524288"  // Warn when a function uses more than 512 KiB of stack memory
 #else
