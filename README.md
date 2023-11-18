@@ -1,8 +1,11 @@
 Plugin akarin
 =============
+Various tools for video processing via vapoursynth. Each function is designed for specific video manipulation or analysis tasks. 
 
 CAMBI
 -----
+CAMBI (Contrast Aware Multiscale Banding Index) is Netflix's detector for banding (aka contouring) artifacts. For an introduction to CAMBI, please refer to the [tech blog](https://netflixtechblog.com/cambi-a-banding-artifact-detector-96777ae12fe2).
+
 `akarin.Cambi(clip clip[, int window_size = 63, float topk = 0.6, float tvi_threshold = 0.019, bint scores = False, float scaling = 1.0/window_size])`
 
 Computes the CAMBI banding score as `CAMBI` frame property. Unlike [VapourSynth-VMAF](https://github.com/HomeOfVapourSynthEvolution/VapourSynth-VMAF), this filter is online (no need to batch process the whole video) and provides raw cambi scores (when `scores == True`).
